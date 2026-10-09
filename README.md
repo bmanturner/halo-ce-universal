@@ -19,56 +19,8 @@ not yet been validated on this branch.
 
 ## This fork
 
-This is a personal fork of the Apple port. I fixed some iOS problems, such as
-internet joins failing after the app has been in the background (see
-[port/ios/VALIDATION.md](port/ios/VALIDATION.md)). Now that it works, I am
-adding things I like. Fixes that are useful upstream go to the Apple port's
-pull request first.
-
-### Bumper Jumper control scheme (planned: "B.Jumper")
-
-Bumper Jumper first appeared in **Halo 3**, and was also in **Halo 3: ODST**
-and **Halo: Reach**. **Halo 2 (Xbox) did not have it**; its layouts were
-Default, Southpaw, Boxer and Green Thumb.
-
-Halo 3, ODST and Reach:
-
-| Button | Halo 3 | Halo 3: ODST | Halo: Reach |
-|---|---|---|---|
-| **LB** | Jump | Jump | Jump |
-| **RB** | Melee | Melee | Melee |
-| **A** | Switch grenades / reload or swap left weapon (dual wield) | Switch grenades | Switch grenades |
-| **B** | Action / reload (right weapon) | Action / reload | Action / reload |
-| **X** | Use equipment | VISR mode | Armor ability |
-| **Y** | Swap weapons | Swap weapons | Swap weapons |
-| **LT** | Throw grenade / fire left weapon | Throw grenade | Throw grenade |
-| **RT** | Fire (right weapon) | Fire | Fire |
-| **L3** | Crouch | Crouch | Crouch |
-| **R3** | Zoom | Zoom | Zoom |
-| **Back** | Scoreboard | VISR database | Scoreboard |
-
-The proposed Halo CE version (DualSense labels):
-
-| Button | Xbox equivalent | Halo CE action |
-|---|---|---|
-| **L1** | LB | Jump |
-| **R1** | RB | Melee |
-| **Cross** | A | Switch grenades |
-| **Circle** | B | Action / reload |
-| **Square** | X | Flashlight |
-| **Triangle** | Y | Switch weapons |
-| **L2** | LT | Throw grenade |
-| **R2** | RT | Fire |
-| **L3** | Left stick click | Crouch |
-| **R3** | Right stick click | Zoom |
-| **Options** | Start | Pause |
-
-Sources:
-
-- [Halopedia — Halo 3 control schemes](https://www.halopedia.org/H3:Control_schemes)
-- [Halopedia — Halo 3: ODST control schemes](https://www.halopedia.org/H3ODST:Control_schemes)
-- [Halopedia — Halo: Reach control schemes](https://www.halopedia.org/Reach:Control_schemes)
-- [Halopedia — Halo 2 control schemes](https://www.halopedia.org/H2:Control_schemes)
+I fixed some stuff on iOS. Now that it works, I'm just adding stuff I like,
+such as a Bumper Jumper ("B.Jumper") controller layout.
 
 ## Download
 
