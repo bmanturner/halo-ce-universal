@@ -62,7 +62,17 @@ for name in gles_functions(str(ROOT/'port/linux/src/gl.h')):
     lines.append(f'static {ret} {bridge}({", ".join(decl) or "void"}) {{')
     signature=', '.join(t for t,_ in plist) or 'void'
     lines.append(f'    typedef {ret} (GL_APIENTRY *Function)({signature});')
-    lines.append(f'    static Function function; if(!function) function=(Function)halo_graphics_proc("{name}");')
+    if name=='glDrawElementsBaseVertex':
+        # an ES 3.0 context (ANGLE on Apple GPUs) has the entry point only as the EXT or OES extension's; the
+        # lookup is fatal for a name the context lacks, so the extensions are asked for first
+        lines.append('    static Function function; if(!function) {')
+        lines.append('        const char *proc="glDrawElementsBaseVertex";')
+        lines.append('        if(halo_graphics_has_extension("GL_EXT_draw_elements_base_vertex")) proc="glDrawElementsBaseVertexEXT";')
+        lines.append('        else if(halo_graphics_has_extension("GL_OES_draw_elements_base_vertex")) proc="glDrawElementsBaseVertexOES";')
+        lines.append('        function=(Function)halo_graphics_proc(proc);')
+        lines.append('    }')
+    else:
+        lines.append(f'    static Function function; if(!function) function=(Function)halo_graphics_proc("{name}");')
     lines.append(f'    if(!function) host_fatal("OpenGL ES entry point unavailable: {name}");')
     if name=='glBindFramebuffer':
         lines.append('    if(!a1) a1=host_ios_default_framebuffer();')
