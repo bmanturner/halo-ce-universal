@@ -13,3 +13,8 @@ swift tools/apple_icon.swift port/ios/Assets.xcassets/AppIcon.appiconset port/ma
 
 The `RingArtwork` image set displays this artwork on the import screen and iOS launch screen. The
 macOS `Community.icns` contains resized versions of the same artwork.
+
+The Apple TV icon and top shelf images are made from the same artwork by
+`tools/tvos_icon.py`, which writes `port/tvos/Assets.xcassets`. It crops the
+artwork to the 5:3 icon and splits it into three depth layers; see
+[port/tvos](../tvos/README.md).

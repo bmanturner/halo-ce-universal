@@ -1,4 +1,4 @@
-# Halo: Combat Evolved for iPhone and iPad
+# Halo: Combat Evolved for iPhone, iPad and Apple TV
 
 A port of the Halo: Combat Evolved decompilation (Xbox build 2342,
 `cachebeta.exe`, SHA-256
@@ -35,7 +35,10 @@ Not in upstream OpenCE:
   only on OpenGL ES 3.2 now runs on the iPad's ES 3.0.
 - **Profile-guided optimisation** for the iOS build.
 - **Apple TV app** ([port/tvos](port/tvos/README.md)): a personal build with
-  your own maps built into the app, controllers and iCloud saves.
+  your own maps built into the app. It draws with ANGLE's Metal backend
+  (built from source for tvOS), plays with game controllers, keeps saves in
+  iCloud, and switches the TV to SDR while it is in front so the TV can use
+  its game mode.
 
 None of these change what goes over the network, so public servers still work.
 
@@ -46,9 +49,14 @@ unsigned IPA for iPhone and iPad (iOS 16 or later). Sign it with your own
 Apple account before installing: AltStore, SideStore or Sideloadly, or
 [port/ios/RESIGNING.md](port/ios/RESIGNING.md) with Xcode's tools.
 
+There is no Apple TV download: the Apple TV app contains your own game data,
+so you build it yourself.
+
 ## Build and install
 
-On an Apple Silicon Mac with Xcode:
+Both need an Apple Silicon Mac with Xcode.
+
+### iPhone and iPad
 
 ```sh
 python3 tools/ios_build.py --team YOUR_TEAM_ID --bundle-id com.yourname.haloce
@@ -58,12 +66,39 @@ xcrun devicectl device install app --device DEVICE_ID build/ios/app-device/Relea
 [port/ios/README.md](port/ios/README.md) has the toolchain, the simulator,
 signing and troubleshooting.
 
+### Apple TV
+
+Pair the Apple TV with Xcode first: on the Apple TV, open Settings > Remotes
+and Devices > Remote App and Devices; on the Mac, Xcode > Window > Devices
+and Simulators. Then:
+
+```sh
+python3 tools/tvos_build.py --team YOUR_TEAM_ID --bundle-id com.yourname.haloce.tv \
+    --game-data ~/HaloData/maps --install APPLE_TV_ID
+```
+
+`--game-data` is a folder with your Xbox maps (see "Game data") and
+`APPLE_TV_ID` comes from `xcrun devicectl list devices`. Add
+`--custom-edition DIR` for Custom Edition maps and
+`--icloud-container iCloud.com.yourname.haloce` for iCloud saves. It needs
+a paid Apple developer team. The first build also builds ANGLE for tvOS from
+source: about 7 GB and 10 minutes. [port/tvos/README.md](port/tvos/README.md)
+has the details, the controls and what differs from iOS.
+
 ## Game data
 
-The app does not include the game data. Use your own Xbox disc image (`.iso`
-or `.xiso`) of Halo: Combat Evolved: at the first start, tap **Choose Halo
-ISO** and select it in Files. Refer to "Install and add game data" in
-[port/ios/README.md](port/ios/README.md).
+The apps do not include the game data. Use your own Xbox disc image (`.iso`
+or `.xiso`) of Halo: Combat Evolved.
+
+- **iPhone and iPad:** at the first start, tap **Choose Halo ISO** and select
+  it in Files. Refer to "Install and add game data" in
+  [port/ios/README.md](port/ios/README.md).
+- **Apple TV:** tvOS has no Files app, so the maps are built into the app.
+  Extract them on the Mac with
+  `python3 tools/ios_extract_assets.py YOUR.iso --output ~/HaloData`, which
+  writes `~/HaloData/maps`, or copy them from the iPhone or iPad app (refer to
+  "Game data" in [port/tvos/README.md](port/tvos/README.md)). A build made
+  this way contains your game data: keep it to yourself.
 
 ## Multiplayer
 
@@ -77,7 +112,5 @@ netcode.
 The code still builds for Linux, Windows, Android and the web; their
 instructions are in [port/linux](port/linux/README.md),
 [port/windows](port/windows/README.md), [port/android](port/android/README.md)
-and [port/web](port/web/README.md).
-
-Apple TV: [port/tvos](port/tvos/README.md) builds a personal app with your
-own game data built in, because tvOS cannot import a disc image.
+and [port/web](port/web/README.md). A native Mac app is built with
+`python3 tools/macos_build.py` ([port/macos](port/macos/README.md)).

@@ -130,6 +130,11 @@ about 290 MB each), are rebuilt by the game and are not mirrored.
 | Game controller (MFi, Xbox, PlayStation) | Passes through SDL as on the other platforms, for menus and play |
 | Siri Remote | Reaches the game as keys, not as a player controller: Select is A, Menu is B (back), swipes are the arrow keys. Enough for the menus, not for play |
 
+The game reads a controller's buttons once a frame, so a tap shorter than a
+frame could fall between two reads. `host_platform.m` latches every press and
+passes on a tap that was released before the next read (the log says
+`controller: a tap between two reads of button N, passed on`).
+
 There are no on-screen controls. While the game runs, Menu does not leave the
 app (SDL's controller UI events hint is off); use the TV/Home button.
 
@@ -182,12 +187,13 @@ xcrun devicectl device copy from --device DEVICE --domain-type appDataContainer 
 | --- | --- |
 | `port/tvos/CMakeLists.txt` | The Xcode project for the app |
 | `port/tvos/Info.plist`, `port/tvos/Entitlements.plist` | The app's properties and entitlements |
-| `port/tvos/host_platform.m` | The tvOS hooks: no on-screen controls, controllers pass straight through SDL, browser rooms report unavailable, the built-in maps setup |
+| `port/tvos/host_platform.m` | The tvOS hooks: no on-screen controls, controllers pass straight through SDL with the tap latch, the SDR display request, browser rooms report unavailable, the game data setup (`paths.maps`, the writable folder in Caches) |
 | `port/tvos/host_cloud_saves.m` | The CloudKit mirror |
 | `port/tvos/tvos_host.h` | The header the two host files share |
-| `port/tvos/Assets.xcassets` | The brand assets, made by `tools/tvos_icon.py` from `port/apple/RingArtwork.png` |
+| `port/tvos/Assets.xcassets` | The brand assets (the icon in three depth layers, Front, Middle and Back, and the top shelf images), made by `tools/tvos_icon.py` from `port/apple/RingArtwork.png` |
 | `tools/tvos_build.py` | The build, the SDL copy and the install |
 | `tools/tvos_angle.py` | Builds ANGLE's `libEGL` and `libGLESv2` frameworks for tvOS |
+| `tools/tvos_icon.py` | Makes the icon and top shelf images (needs Pillow and numpy) |
 
 The rest of the app, the guest, the address arena and the ABI bridges, is
 shared with the iOS build. The SDL copy in `build/third_party/SDL3-tvos`
@@ -199,8 +205,8 @@ differs from the pinned SDL clone (`build/third_party/SDL3`, made by
 
 On an Apple TV 4K (3rd generation, A15, `AppleTV14,1`) with tvOS 27.0
 (24J361), 2026-10-10, unattended through `devicectl` with the diagnostics
-above. The rows up to Display mode were taken with Apple's OpenGL ES, before
-the app drew with ANGLE:
+above. The rows from Start to Display mode were taken with Apple's OpenGL ES,
+before the app drew with ANGLE; the ANGLE rows say so:
 
 | Check | Result |
 | --- | --- |
@@ -208,13 +214,12 @@ the app drew with ANGLE:
 | Blood Gulch, hosted by `HALO_NETWORK_TEST=host:bloodgulch`, `HALO_TEST_INPUT=look:1` | 59.9 fps for 79 s (frame counter from `HALO_GPU_STATS`); physical footprint 461 MiB (Instruments, Activity Monitor) |
 | Icefields, a Custom Edition map (`host:custom_maps\icefields`), in the 4.0 GB build | Loads from `GameData/CustomEdition`; 59.8 fps for 69 s, slowest 1 s window 58.0 |
 | iCloud saves | All 32 save and config files uploaded, `savegame.bin` (20 MiB) included; after uninstalling and reinstalling the app, 32 of 32 restored with their SHA-256 matching. The playlists (`blam.lst`) differ afterwards because the game rewrites them at each start |
-| DualSense, by hand | SDL reports it as a PlayStation 5 gamepad; the D-pad, the stick, Cross and Circle move through and open the menus. The person holding it found the menus a little delayed. One quick D-pad tap of two never reached SDL, which reads the controller's state once a frame, and the other showed as held for 15 ms. `host_platform.m` now latches every press and passes on a tap that falls between two reads (it logs `controller: a tap between two reads of button N, passed on`); not yet checked by hand |
+| DualSense, by hand | SDL reports it as a PlayStation 5 gamepad; the D-pad, the stick, Cross and Circle move through and open the menus. The person holding it found the menus a little delayed. One quick D-pad tap of two never reached SDL, which reads the controller's state once a frame, and the other showed as held for 15 ms. `host_platform.m` now latches every press and passes on a tap that falls between two reads (it logs `controller: a tap between two reads of button N, passed on`); in two online matches it passed on 4 taps. The controller reported 50 to 120 times a second while the sticks moved |
 | Graphics settings | MSAA left the screen black (sound still played): SDL presents the renderbuffer bound at the swap, and the game's multisampled targets had left theirs bound. With the view's renderbuffer bound before the swap, every anti-aliasing mode draws (off, FXAA, SMAA, SSAA 2X, MSAA 2X, 4X, 8X; the GPU allows at most 4 samples, so 8X draws 4X), as do render heights 720 and 1440 and the shadow and per-pixel lighting settings. The drawable is 1920x1080, so render heights above 1080 draw the same as Native. Blood Gulch with MSAA 2X, 512 shadow maps and per-pixel lighting: 59.9 fps over 60 s |
 | Display mode | With Match Content on and the Format set to HDR, the TV switched to SDR when the game started and turned on its game mode, which it refuses in HDR (seen at the TV); the log shows `display: mode switch finished` |
+| Busy fights, with Apple's OpenGL ES | Two online matches on Blood Gulch with 13 to 16 players, by hand with a DualSense (MSAA 2X and 512 shadow maps, then FXAA and 256): mostly 60 fps, but the busiest fights fell to 21 to 50 fps (44 seconds below 55 fps in the first match, 17 in the second). The game thread was busy about 6 ms a frame and waited for the GPU the rest, so the GPU was the limit; the player felt it as missed presses and overshooting aim. Joining public games over the internet worked |
 | ANGLE | `tools/tvos_angle.py` built the frameworks (LC_BUILD_VERSION platform 3, tvOS 17.0, arm64) and `tools/tvos_build.py` embedded and signed them. The app logs `Renderer: Metal (ANGLE); ANGLE is in this build` and `OpenGL ES 3.0 (ANGLE 2.1.28252 git hash: c053bf85793b)`; of the capabilities only base vertex is added (S3TC, copy image, border clamp and sample counting are still absent); the render target and drawable are 1920x1080; the shader cache loads its blobs on later launches. Blood Gulch (`host:bloodgulch`, `look:1`): 59.9 fps over 60 s, slowest second 58.0, twice |
-| ANGLE against Apple's OpenGL ES | In a probe on Blood Gulch (FXAA, 256 shadow maps, per-pixel lighting, both at a 1920x1080 drawable), the GPU work left at each present (`glFinish` wait) was 5.8 ms a frame with ANGLE and 8.3 ms with Apple's OpenGL ES. A 3840x2160 drawable added about 0.9 ms; MetalFX 1280x720 to 1920x1080 cost about 5 ms and to 3840x2160 13-15 ms. A busy 16-player fight was not measured |
+| ANGLE against Apple's OpenGL ES | In a probe on Blood Gulch (FXAA, 256 shadow maps, per-pixel lighting, both at a 1920x1080 drawable), the GPU work left at each present (`glFinish` wait) was 5.8 ms a frame with ANGLE and 8.3 ms with Apple's OpenGL ES. A 3840x2160 drawable added about 0.9 ms; MetalFX 1280x720 to 1920x1080 cost about 5 ms and to 3840x2160 13-15 ms. A busy fight was not measured with ANGLE |
 
-Not checked yet: play with a controller beyond the menus (input feel in the
-game, rumble), the Siri Remote in the menus, text entry, internet play with
-another machine, busy fights with ANGLE, and Apple TV 4K models before the
-3rd generation.
+Not checked yet: rumble, the Siri Remote in the menus, text entry, busy
+fights with ANGLE, and Apple TV 4K models before the 3rd generation.
