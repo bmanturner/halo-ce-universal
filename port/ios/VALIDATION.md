@@ -1,12 +1,108 @@
-# iOS/browser integration validation
+# iOS validation
 
-This record applies to `apple/ios-upstream-merge` (from
-`apple/ios-web-multiplayer`), based on PR #12 at
-`eaa82e6803f3d3e67c91d7f2fa2b15ee04e195f5` and the iOS fork at
-`3f2c14101d3ae1c7f0c0a11993a43407fadbeb46`. Updated 2026-10-09.
-Reports of gameplay on the original iOS fork are not validation of this merge.
+This is the device and simulator validation record, with a dated log, of the
+Halo: Combat Evolved iPhone and iPad app. It applies to `main` of
+`bmanturner/halo-ce-universal`: version 0.2.0 (15), synced with OpenCE `main`
+`9da2a45f` (build 177). Updated 2026-10-10.
+Reports of gameplay on the original iOS fork are not validation of this code.
 
-## Upstream merge — main `9da2a45f`, 2026-10-10
+## Current status
+
+Verified on hardware:
+
+- 0.2.0 (15): a signed build of commit `8a2ae846` launched on an iPad Pro 11"
+  (4th gen, M2): 219 guest imports resolved (0 unavailable), Metal (ANGLE)
+  renderer, main menu, audio output active ("Release — 0.2.0 (15)").
+- A network co-op host on `a10` loaded, passed the cutscene skip vote and
+  played with the touch controls on the iPad ("Upstream merge — main
+  `f479e349`").
+- Server-browser joins of public servers work on the iPad, including after a
+  background and device lock of about 4 minutes ("Background resume and
+  internet joins"; "Client-side additions").
+- A DualSense on the iPad: its touchpad held shows the scoreboard; an Xbox
+  Series X controller works on an iPhone ("Client-side additions"; "Menu and
+  controller follow-up").
+- Frame Rate (30 CLASSIC, 60, DISPLAY) measured on the iPad in both Low Power
+  Mode states, with and without MetalFX ("Frame rate setting").
+- Render height, MetalFX and Custom Edition maps on the iPad
+  ("Client-side additions"); earlier iPhone 13 Pro and iPhone 15 Pro device
+  checks are in the older entries.
+
+## Open items
+
+Not yet verified. Items the log shows as done are not listed.
+
+- Sustained play on hardware (matches, extended campaign, split-screen co-op):
+  movement and fire replication, scores, player identity and checkpoint
+  continuity.
+- Latency and memory on hardware; extended-play frame time on every supported
+  device (frame time was measured on the iPad Pro M2 only). Frame rate: the
+  on-screen cadence and battery use.
+- Sound at the 1024-frame audio buffer by ear (output was active in 0.2.0).
+- Upstream's FOV AND VIEWMODELS and GRAPHICS screens, in-game settings from
+  the campaign pause menu, and controller removal on a device.
+- Online split screen with several controllers; browser rooms.
+- Voice chat on iOS: capture on a device, VOICE CHAT and VOICE VOLUME in
+  Settings > Audio, push to talk with a hardware keyboard's V (there is no
+  touch or controller talk button, and no echo cancellation).
+- Controllers: rumble on iOS by feel; Backbone and other PlayStation hardware
+  (a DualSense is verified).
+- Hosting after a background resume; a game under way across a background
+  shorter than 20 seconds; other platforms' behavior after a long `select` gap
+  (the STUN and broker refresh is shared code); WebKit process termination
+  recovery.
+- Browser crossplay, host migration and reconnect paths on hardware with
+  matching browser maps, including cold-restart admission: a restarted iOS host
+  could not rejoin its former match after the browser took over, because the
+  browser server rejected its selected machine slot.
+- Separate internet connections and TURN-only connectivity for the optional
+  WebRTC transport.
+- The two Mac mission visual bugs from 0.1.5 (a transparent floor panel and the
+  escape pod front, and escape-pod jitter in the ending cinematic); the macOS
+  app's interactive controller, menu and crossplay coverage, launching it on
+  the current build, and a separate native macOS renderer.
+- Physical shake input for the debug panel; AirDrop delivery of shader reports.
+- The web page in a browser, and Linux and Windows builds.
+
+## Reproduce
+
+```sh
+python3 tools/ios_test.py
+node --test tools/tests/*.test.cjs
+python3 tools/ios_build.py --unsigned --ipa dist/Halo-CE-iOS-unsigned.ipa
+python3 tools/ios_build.py --simulator
+```
+
+Optional real-network transport test on an Apple Silicon Mac with a GUI session:
+
+```sh
+npm install --prefix build/network-test playwright
+build/network-test/node_modules/.bin/playwright install chromium
+node tools/test_ios_webrtc.cjs
+```
+
+This creates a random isolated room on the public signaling services, starts
+Chromium and a native WebKit probe, and checks datagrams and reliable streams.
+It needs internet access but no game assets or signing account. It is not run
+by default CI, because external signaling and GUI availability are variable.
+
+## Log
+
+### Release — 0.2.0 (15), 2026-10-10
+
+Published as GitHub release `apple-v0.2.0`
+(https://github.com/bmanturner/halo-ce-universal/releases/tag/apple-v0.2.0)
+with one unsigned IPA for iPhone and iPad, `Halo-CE-iOS-unsigned.ipa` (iOS 16+,
+SHA-256 `0c796fa673f3a2ef86a90e2f3fa9c2eafa2fd85014f28821260cac6f4ae58ae7`),
+built from commit `8a2ae846`, which has OpenCE `main` `9da2a45f` (build 177)
+merged.
+
+Observed: a signed build of that commit was installed on an iPad Pro 11"
+(4th gen, M2) and launched. 219 guest imports resolved (0 unavailable), the
+renderer was Metal (ANGLE), the main menu appeared and audio output was
+active. This is a launch check, not sustained play or a listening test.
+
+### Upstream merge — main `9da2a45f`, 2026-10-10
 
 Merged 97 upstream commits: upstream's split of `HALO_ANDROID` into
 `HALO_ARM64_GUEST` (the guest's ABI), `HALO_GLES` (the ES renderer) and
@@ -57,7 +153,7 @@ Observed:
 - Not verified here: sound at the new buffer size, the FOV screens and
   controller removal on a device, Linux and Windows builds.
 
-## Frame rate setting — 2026-10-10
+### Frame rate setting — 2026-10-10
 
 `display.frame_rate` (iOS): Video Settings' FRAME RATE row (30 CLASSIC, 60,
 DISPLAY) in SMOOTH MOTION's place on the touch layout (menu platform
@@ -95,7 +191,7 @@ Changing the row in the menu applied at once: the log showed
 menu ran at 120, then 60, then 120 fps. Not measured: the on-screen cadence
 (ANGLE reports no presentation times) and battery use.
 
-## Upstream merge — main `6a74eab5`, 2026-10-09
+### Upstream merge — main `6a74eab5`, 2026-10-09
 
 Merged 27 upstream commits: Android touch menus (`touch_input.c`,
 `touch_menu.c`, `ui_widget.c`'s tap targets, `debug.touch_targets`), Android's
@@ -131,7 +227,7 @@ Observed:
 - Not verified: the app on a device after this merge, Android touch controls
   on a device, the page in a browser, Linux and Windows builds.
 
-## Client-side additions — 2026-10-09
+### Client-side additions — 2026-10-09
 
 Device: iPad Pro 11" (4th gen, M2, 2388x1668 at 120 Hz), DualSense, ANGLE
 Metal (OpenGL ES 3.0, ANGLE 2.1.28252). Timings come from a throwaway probe
@@ -198,7 +294,7 @@ range), `node --test tools/tests/*.test.cjs` passes (132), and
 `tools/test_linux_port.py`'s menu tests pass; its three Linux-toolchain tests
 fail on macOS before and after. The device, Simulator and macOS apps build.
 
-## Background resume and internet joins — 2026-10-09
+### Background resume and internet joins — 2026-10-09
 
 Symptom: on the iPad, server browser joins failed with "could not reach"
 after the app had been in the background. A fresh launch joined.
@@ -234,7 +330,7 @@ Not verified: hosting after a resume, a game under way across a background
 shorter than 20 seconds, and other platforms' behavior after a long
 `select` gap (the STUN and broker refresh is shared code).
 
-## Upstream merge — main `f479e349`, 2026-10-09
+### Upstream merge — main `f479e349`, 2026-10-09
 
 Merged 390 upstream commits (online co-op, online split screen, voice chat,
 Custom Edition maps, renderer/audio work, hardening; network version 11 → 24).
@@ -287,7 +383,7 @@ Observed:
   multiple controllers, voice chat capture on device, browser rooms, and
   launching the macOS app.
 
-## Main refresh — 0.1.9 (13), 2026-10-04
+### Main refresh — 0.1.9 (13), 2026-10-04
 
 Integrated upstream main `193cbf59` and retained PR #12 head `eaa82e68` (no
 newer WASM commits were available). This replaces the default native list
@@ -326,7 +422,7 @@ continue to come from the user's image.
   PR #12 web demos were protocol 6 at the last check; native protocol remains
   11. This refresh does not claim to resolve that incompatibility.
 
-## Observed locally
+### Observed locally
 
 - Unsigned ARM64 iPhone/iPad app and IPA built with Xcode 27 and LLVM/LLD 23.1.2.
 - ARM64 iOS simulator app compiled and linked, installed and launched on the
@@ -374,7 +470,7 @@ same engine with simulator-only launch settings added to bypass the chooser;
 those settings do not affect device builds. Local host migration tests also
 pass with the `HALO_IOS_BROWSER` feature guard and reject original failure cases.
 
-## Menu and controller follow-up
+### Menu and controller follow-up
 
 - Normal launch now opens Halo's main menu. The signed update was installed on
   the designated iPhone 13 Pro (iOS 26.7.1); its screenshot confirms the menu,
@@ -395,46 +491,7 @@ pass with the `HALO_IOS_BROWSER` feature guard and reject original failure cases
 - The iPhone 15 Pro is excluded from further device testing at the user's
   request. Physical-device tests now target only the iPhone 13 Pro.
 
-## Reproduce
-
-```sh
-python3 tools/ios_test.py
-node --test tools/tests/*.test.cjs
-python3 tools/ios_build.py --unsigned --ipa dist/Halo-CE-iOS-unsigned.ipa
-python3 tools/ios_build.py --simulator
-```
-
-Optional real-network transport test on an Apple Silicon Mac with a GUI session:
-
-```sh
-npm install --prefix build/network-test playwright
-build/network-test/node_modules/.bin/playwright install chromium
-node tools/test_ios_webrtc.cjs
-```
-
-This creates a random isolated room on the public signaling services, starts
-Chromium and a native WebKit probe, and checks datagrams and reliable streams.
-It needs internet access but no game assets or signing account. It is not run
-by default CI, because external signaling and GUI availability are variable.
-
-## Required before marking ready
-
-- Install a personally signed build on an iPhone/iPad and import the user's
-  original maps. Validate menu, campaign, controls, rendering and audio.
-- Repeat the successful simulator join/host/migration tests on hardware with
-  matching browser maps. Verify movement/fire replication, scores, player
-  identity and checkpoint continuity over extended play.
-- Resolve cold-restart admission after host migration; verify reconnect paths.
-- Test separate internet connections and TURN-only connectivity.
-- Measure frame time, latency, memory and extended play on hardware.
-- Exercise app background/resume and WebKit process termination; recovery is
-  not yet a validated promise.
-
-The user supplied a compatible original Xbox disc image. Real native/browser
-matches now have simulator evidence; physical-device behavior and the remaining
-cases above are still unverified. Keep the PR in draft until those checks pass.
-
-## Graphics diagnostics (2026-10-03)
+### Graphics diagnostics (2026-10-03)
 
 - Fixed GLES water draws losing their destination framebuffer after ripple
   mipmap blits. A/B simulator runs of `levels\b30\b30` show a flat dark water
@@ -456,7 +513,7 @@ cases above are still unverified. Keep the PR in draft until those checks pass.
   regression checks pass. Full signed-device and simulator host builds pass.
 - macOS menu routing and a separate native macOS renderer remain unvalidated.
 
-## Persisted renderer selection (2026-10-03)
+### Persisted renderer selection (2026-10-03)
 
 - Default startup selects ANGLE's Metal backend. Simulator logs identify its
   Metal renderer; iPhone 13 Pro logs identify the Apple A15 Metal GPU. The
@@ -478,7 +535,7 @@ cases above are still unverified. Keep the PR in draft until those checks pass.
 - This adds a Metal backend via ANGLE, not a handwritten Metal renderer.
   Extended campaign/crossplay performance and all-device coverage remain open.
 
-## Private-image storage and native Mac target (2026-10-03)
+### Private-image storage and native Mac target (2026-10-03)
 
 - Removed the touch visibility toggle; iPhone controls remain automatic and
   the native AppKit target creates no touch overlay.
@@ -514,7 +571,7 @@ cases above are still unverified. Keep the PR in draft until those checks pass.
   from it as `Notarized Developer ID`. The final package was also checked for
   accidental game/private data. Actual AirDrop delivery remains unverified.
 
-## Settings and menu audio update (0.1.4 / 8)
+### Settings and menu audio update (0.1.4 / 8)
 
 - macOS Settings is a reusable separate window under the application menu
   (⌘,); iOS retains its shake-presented modal, now titled Settings.
@@ -540,7 +597,7 @@ cases above are still unverified. Keep the PR in draft until those checks pass.
   as `HaloCE-0.1.4-AppleSilicon.zip` and successfully sent it to the user's
   MacBook through Taildrop. No DMG is required for this local test release.
 
-## First-mission feedback / 0.1.5 (9)
+### First-mission feedback / 0.1.5 (9)
 
 - User completed the first mission on Mac and reported compilation hitches,
   two transparent surfaces (floor panel and escape-pod front), escape-pod
@@ -577,7 +634,7 @@ cases above are still unverified. Keep the PR in draft until those checks pass.
   to the user's MacBook via Taildrop. The visual mission bugs above remain
   open pending a reproducible scene/checkpoint or clip.
 
-## Application naming / 0.1.6 (10)
+### Application naming / 0.1.6 (10)
 
 - Distributed Mac bundle: `Halo: Combat Evolved.app`. Menu heading and SDL
   application metadata use the full title; localized InfoPlist strings give
@@ -592,7 +649,7 @@ cases above are still unverified. Keep the PR in draft until those checks pass.
   name, full application name and short localized icon label still match.
   Sent `Halo-0.1.6-AppleSilicon.zip` to the MacBook using Taildrop.
 
-## Public servers — 0.1.7 (11), 2026-10-04
+### Public servers — 0.1.7 (11), 2026-10-04
 
 - Signed iPhone 15 Pro build installed as `com.LoganShire.HaloCE`, preserving
   imported game data and saves. Native networking is now the default.
@@ -626,7 +683,7 @@ Developer-only launch variables: `HALO_NATIVE_TEST_BROWSER=1` opens the browser
 20 seconds after game event pumping starts; optional `HALO_NATIVE_TEST_JOIN`
 selects exactly one named server once. Neither is set in ordinary launches.
 
-## Visible join progress — 0.1.8 (12), 2026-10-04
+### Visible join progress — 0.1.8 (12), 2026-10-04
 
 - The reported phone join to MassiveFlagWar was accepted by the server and
   reached player setup; no rejection was logged before event processing stopped.
@@ -649,3 +706,4 @@ selects exactly one named server once. Neither is set in ordinary launches.
 - Both Apple release builds pass, the device signature verifies, and the full
   `tools/ios_test.py` suite passes. Existing campaign rendering issues and
   browser/WebRTC interoperability limitations are unchanged.
+

@@ -38,7 +38,7 @@ you use your own account.
 
 ## Sign and install
 
-Check out `apple/ios-web-multiplayer` from `AttilaTheFun/halo-ce-universal`.
+Check out `main` from `bmanturner/halo-ce-universal`.
 From its root, run:
 
 ```sh

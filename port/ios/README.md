@@ -5,7 +5,7 @@ runtime. It uses SDL3, OpenGL ES 3, UIKit touch controls, and the user's origina
 Xbox map files. The game files are separate from the application and are never
 included in source control.
 
-The Home Screen name is **Halo: CE**. The portable ILP32 runtime lives in
+The Home Screen name is **Halo**. The portable ILP32 runtime lives in
 `port/runtime`; UIKit, Darwin, touch, audio, and the native loader live here.
 The existing Android, Linux, Windows and web build targets are retained.
 
@@ -87,7 +87,8 @@ The cache validator accepts these exact Xbox v5 cache builds on iOS:
 
 ### Import on the device
 
-1. Sign/install the IPA with your own account, then open **Halo: CE**.
+1. Sign/install the IPA with your own account (the unsigned IPA is on the
+   project's Releases page), then open **Halo**.
 2. Tap **Choose Halo ISO** and select your `.iso` or `.xiso` in Files (On My
    iPhone/iPad, iCloud Drive, or another Files provider). Compressed ZIP/7z
    archives and PC/MCC disc images are not supported.
@@ -129,7 +130,8 @@ xcrun devicectl device install app --device DEVICE_UDID \
 xcrun devicectl device process launch --device DEVICE_UDID com.yourname.haloce
 ```
 
-Downloaded unsigned IPAs must first be signed with your own Apple account.
+Downloaded unsigned IPAs (see Download in the [main README](../../README.md))
+must first be signed with your own Apple account.
 Use [`tools/ios_resign.sh`](../../tools/ios_resign.sh) with your local signing
 identity and device provisioning profile; see the [re-signing and installation
 guide](RESIGNING.md) for the complete setup and commands.
@@ -161,21 +163,20 @@ before uninstalling or changing bundle IDs.
 
 ### Resolution
 
-Native physical display resolution is the default, with a Retina drawable and
-matching internal color/depth targets. The game retains its original logical
-layout coordinates, so the HUD and touch controls keep their size.
+Video Settings > RENDER HEIGHT sets the internal render height: NATIVE (the
+default), 1440, 1200, 1080, 900 or 720. It applies after a restart. NATIVE uses
+the display's physical resolution with a Retina drawable and matching internal
+color/depth targets. The game retains its original logical layout coordinates,
+so the HUD and touch controls keep their size. With MetalFX on, MetalFX
+upscales from the chosen height (720 if NATIVE).
 
-For a lower GPU workload, edit the existing `[display]` section of
-`Documents/config.toml` and relaunch:
-
-```toml
-render_height = 0 # Native (default); 1080, 720, or 480 render fewer pixels
-screen_width = 0  # Fit the display; 640 selects original 4:3
-```
+The row stores `display.render_height` in `Documents/config.toml`; `0` is
+NATIVE and the other values match the menu. `display.screen_width = 0` fits
+the display; `640` selects original 4:3.
 
 The renderer preserves the selected aspect ratio and caps the render size to
 the drawable and GPU texture limit. Existing configuration files without
-`render_height` automatically use native resolution. Apple graphics diagnostics
+`render_height` use native resolution. Apple graphics diagnostics
 are available from the shake modal or Mac Settings window, as described below.
 
 ### Frame rate
@@ -205,9 +206,12 @@ The USB-C Backbone requires a compatible USB-C device; it cannot plug directly
 into the Lightning iPhone 13 Pro.
 
 The first hardware controller shares player one with the on-screen controls.
-Touch controls and their visibility toggle hide when a gamepad connects and
-return when it disconnects. Player one's controller
-stays selected while connected, even if another controller is attached.
+Player one's controller stays selected while connected, even if another
+controller is attached.
+
+Settings > Gamepads > BUTTON LAYOUT includes B.JUMPER. Click and hold a
+DualSense or DualShock 4 touchpad to show the scoreboard; the controller's
+Back, Create or Share button also shows it, as in the original game.
 
 | Action | Xbox / standard labels | PlayStation labels |
 | --- | --- | --- |
@@ -219,10 +223,12 @@ stays selected while connected, even if another controller is attached.
 | Flashlight / switch grenade | RB / LB | R1 / L1 |
 | Crouch / zoom | Left / right stick click | L3 / R3 |
 | Pause | Menu / Start | Options |
+| Scoreboard | Back / View | Share / Create / Touchpad (click and hold) |
 
-The user confirmed an Xbox Series X controller works on the iPhone.
-Backbone and PlayStation hardware validation remains pending;
-controller model-specific capabilities such as haptics are not promised.
+The user confirmed an Xbox Series X controller works on the iPhone and a
+DualSense on the iPad. Backbone controllers have not been verified. The game
+sends basic rumble to the controller; rumble on iOS has not been checked by
+feel. Adaptive triggers, the lightbar and gyro are not supported.
 Developer console messages, frame counters, profiling text and the menu's build label are omitted
 from the game picture. Diagnostic log files remain available in Documents.
 
@@ -242,7 +248,7 @@ on-screen controls on iOS; macOS also supports mouse and keyboard. Select a
 server, inspect its game details, then join. The list shows maps, game types,
 player counts and connection status, with Refresh and Back buttons.
 Only listings with this build's network version (`HALO_PORT_NETWORK_VERSION`,
-currently 24) are shown, so hosts must run a current upstream build. A
+currently 25) are shown, so hosts must run a current upstream build. A
 matching map from the user's imported image is required; discovery does not
 guarantee reachability. Keep the app in the foreground while connecting and
 playing: internet play drops a peer it has not heard from in 20 seconds, so
@@ -256,23 +262,35 @@ and reconnects the MQTT brokers at once (`p2p.c`, `p2p_signal.c`), so the
 server browser can join without restarting the app. TCP sockets are not
 recreated: a connection open during the suspension is lost.
 
-This integrates main through `f479e349`, including the in-game server browser,
-online co-op campaign, online split screen (ADD PLAYER in the lobby, one
-extra controller per player), password-protected lobbies, vote kick, voice
-chat and upstream's renderer, audio and hardening changes. Discovery uses
-Ed25519 signatures, MQTT brokers (the bundled `brokers.txt`, copied beside
-`config.toml` at launch) and invite joining. Connections use the shared STUN,
-UDP tunnel and KCP implementation; automatic router port forwarding is not
-implemented on Apple. The old UIKit/AppKit list remains a diagnostic fallback
-for Xbox menus and automated native-join tests.
+This integrates OpenCE `main` through `9da2a45f` (OpenCE build 177), including
+the in-game server browser, online co-op campaign, online split screen (ADD
+PLAYER in the lobby, one extra controller per player), password-protected
+lobbies, vote kick, voice chat, field of view and viewmodel settings (Video
+Settings > FOV AND VIEWMODELS), a GRAPHICS screen, settings from the campaign's
+pause menu, high-resolution controller buttons and weapon reticles, and
+upstream's renderer, audio, leak and hardening fixes. Upstream's Android touch
+menus and on-screen controls are not used on iOS, which keeps its own overlay
+(`host/host_touch.m`). Discovery uses Ed25519 signatures, MQTT brokers (the
+bundled `brokers.txt`, copied beside `config.toml` at launch) and invite
+joining. Connections use the shared STUN, UDP tunnel and KCP implementation;
+automatic router port forwarding is not implemented on Apple. The old
+UIKit/AppKit list remains a diagnostic fallback for Xbox menus and automated
+native-join tests.
 
 Voice chat uses SDL's default input and output: the Apple guest does not
 enumerate SDL audio devices. iOS hides the device rows; the Mac app, which
 takes the desktop settings rows, lists only SYSTEM DEFAULT in them, and its
 desktop display rows (mode, resolution, window size, scaling) do nothing: the
-ILP32 platform layer compiles that window code out. iOS asks for microphone
-access the first time voice opens the microphone (open mic, or push-to-talk on
-a hardware keyboard's V); there is no touch or controller push-to-talk button.
+window and display code in `port/linux/src/sdl_platform.c` is compiled out of
+the Apple guest by `#if !defined(HALO_ANDROID) && !defined(HALO_IOS)`.
+Settings > Audio on iOS shows VOICE CHAT (PUSH TO TALK, OPEN MIC or OFF) and
+VOICE VOLUME. iOS asks for microphone access the first time voice opens the
+microphone (open mic, or push to talk on a hardware keyboard's V); there is
+no touch or controller push-to-talk button. With push to talk the microphone
+opens on the first press and stays open until you leave the network game.
+There is no echo cancellation, so use headphones with open mic. Voice capture
+has not been tested on a device.
+
 Halo Custom Edition maps run on Apple. The guest's 23 MB tag cache has a fixed
 address inside the arena's general pool; the host marks those pages used at
 start and hands them to the reservation (host_memory.c), so they never go to
@@ -297,7 +315,7 @@ message kinds, so native hosts and clients keep upstream's numbering.
 This integration is based on [PR #12](https://github.com/cybersecurity/halo-ce-universal/pull/12)
 at `eaa82e6803f3d3e67c91d7f2fa2b15ee04e195f5`. Prefer a web client built
 from this branch: rooms carry the native protocol, now network version
-**24**. The public web demos checked on 2026-10-04 use network version **6**
+**25**. The public web demos checked on 2026-10-04 use network version **6**
 and cannot join this app. Previous pinned-build crossplay/migration results
 predate the upstream merge and are historical evidence, not validation of
 this build.
