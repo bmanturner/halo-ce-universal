@@ -26,7 +26,7 @@ static NSString *glRenderer;
 static NSUInteger sourceBytes,dropped;
 #if HALO_MACOS
 static BOOL debugPresented;
-#else
+#elif !TARGET_OS_TV
 static __weak UIViewController *debugController;
 #endif
 void halo_debug_initialize(void) {
@@ -90,6 +90,8 @@ void halo_debug_draw_end(double started) {
 }
 #if HALO_MACOS
 int halo_debug_is_presented(void) {return debugPresented;}
+#elif TARGET_OS_TV
+int halo_debug_is_presented(void) {return 0;}
 #else
 int halo_debug_is_presented(void) {return debugController!=nil;}
 #endif
@@ -99,6 +101,8 @@ void halo_debug_forget(uint32_t object,int program) {
 }
 #if HALO_MACOS
 static void exportReport(id presenter) {
+#elif TARGET_OS_TV
+static void exportReport(void) {
 #else
 static void exportReport(UIViewController *presenter) {
 #endif
@@ -127,6 +131,10 @@ static void exportReport(UIViewController *presenter) {
     if(!data || ![data writeToURL:file options:NSDataWritingAtomic error:&error]){NSAlert *alert=[NSAlert new];alert.messageText=@"Export failed";alert.informativeText=error.localizedDescription;[alert runModal];return;}
     NSSharingService *share=[NSSharingService sharingServiceNamed:NSSharingServiceNameSendViaAirDrop];
     [share performWithItems:@[file]];
+}
+#elif TARGET_OS_TV
+    if(!data || ![data writeToURL:file options:NSDataWritingAtomic error:&error]){host_logf(HOST_LOG_ERROR,"Shader report export failed: %s",error.localizedDescription.UTF8String);return;}
+    host_logf(HOST_LOG_INFO,"Shader report written to %s",file.fileSystemRepresentation);
 }
 #else
     if(!data || ![data writeToURL:file options:NSDataWritingAtomic error:&error]){UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Export failed" message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];[alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];[presenter presentViewController:alert animated:YES completion:nil];return;}
@@ -321,5 +329,7 @@ void halo_debug_replay_shader_report(void) {
 void halo_debug_test_export(void) {
 #if HALO_MACOS
     if(NSProcessInfo.processInfo.environment[@"HALO_MAC_TEST_SHADER_EXPORT"].length)exportReport(nil);
+#elif TARGET_OS_TV
+    if(NSProcessInfo.processInfo.environment[@"HALO_TVOS_TEST_SHADER_EXPORT"].length)exportReport();
 #endif
 }

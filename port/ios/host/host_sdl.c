@@ -223,7 +223,7 @@ int host_sdl_gl_swap_window(uint32_t window)
 #endif
 	if (!object)
 		return 0;
-	int presented = halo_graphics_metal() ? halo_graphics_swap() : SDL_GL_SwapWindow(object);
+	int presented = halo_graphics_metal() ? halo_graphics_swap() : halo_graphics_gl_swap(object);
 	halo_graphics_pace_frame();
 	return presented;
 }

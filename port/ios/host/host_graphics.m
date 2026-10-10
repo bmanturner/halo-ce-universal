@@ -129,6 +129,7 @@ void halo_graphics_set_preference(int value) {
 }
 void halo_graphics_initialize(void) {
     metal=halo_graphics_prefer_metal();
+    const char *why="";
 #if HALO_MACOS
     metal=YES; /* macOS package ships ANGLE Metal; Apple has no GLES driver. */
 #endif
@@ -136,7 +137,13 @@ void halo_graphics_initialize(void) {
     NSString *test=NSProcessInfo.processInfo.environment[@"HALO_IOS_TEST_RENDERER"];
     if([test isEqualToString:@"metal"] || [test isEqualToString:@"opengl"])metal=[test isEqualToString:@"metal"];
 #endif
-    host_logf(HOST_LOG_INFO,"Renderer: %s",metal?"Metal (ANGLE)":"OpenGL ES (Apple)");
+#if TARGET_OS_TV
+    /* ANGLE is optional in the tvOS build; without it only Apple's OpenGL ES exists. */
+    NSString *angle=[NSBundle.mainBundle.privateFrameworksPath stringByAppendingPathComponent:@"libGLESv2.framework/libGLESv2"];
+    if(![NSFileManager.defaultManager fileExistsAtPath:angle]){metal=NO;why="; ANGLE is not in this build";}
+    else why=metal?"; ANGLE is in this build":"; OpenGL ES is preferred";
+#endif
+    host_logf(HOST_LOG_INFO,"Renderer: %s%s",metal?"Metal (ANGLE)":"OpenGL ES (Apple)",why);
 }
 int halo_graphics_metal(void) {return metal;}
 void *halo_graphics_proc(const char *name) {
@@ -189,6 +196,21 @@ void *halo_graphics_create(SDL_Window *window) {
 int halo_graphics_make_current(void) {return eglMakeCurrent(display,windowSurface,windowSurface,context);}
 int halo_graphics_swap(void) {return eglSwapBuffers(display,windowSurface);}
 int halo_graphics_swap_interval(int interval) {return eglSwapInterval(display,interval);}
+/* Apple's OpenGL ES through SDL's view. SDL presents the renderbuffer bound at
+   the swap ("viewRenderbuffer should always be bound here",
+   SDL_uikitopenglview.m); the game's multisampled targets bind their own, which
+   left the screen black with MSAA, so the view's is bound first. */
+int halo_graphics_gl_swap(SDL_Window *window) {
+#if HALO_MACOS
+    return SDL_GL_SwapWindow(window);
+#else
+    static void (*bindRenderbuffer)(GLenum,GLuint);
+    if(!bindRenderbuffer)bindRenderbuffer=halo_graphics_proc("glBindRenderbuffer");
+    bindRenderbuffer(GL_RENDERBUFFER,(GLuint)SDL_GetNumberProperty(SDL_GetWindowProperties(window),
+        SDL_PROP_WINDOW_UIKIT_OPENGL_RENDERBUFFER_NUMBER,0));
+    return SDL_GL_SwapWindow(window);
+#endif
+}
 
 int halo_graphics_shared_event_supported(void) {return sharedEventSupported;}
 unsigned int halo_graphics_shared_create(unsigned int slot,void *surface,unsigned int w,unsigned int h) {

@@ -34,6 +34,8 @@ Not in upstream OpenCE:
 - **Faster iOS rendering:** the vertex and index cache that upstream enables
   only on OpenGL ES 3.2 now runs on the iPad's ES 3.0.
 - **Profile-guided optimisation** for the iOS build.
+- **Apple TV app** ([port/tvos](port/tvos/README.md)): a personal build with
+  your own maps built into the app, controllers and iCloud saves.
 
 None of these change what goes over the network, so public servers still work.
 
@@ -76,3 +78,6 @@ The code still builds for Linux, Windows, Android and the web; their
 instructions are in [port/linux](port/linux/README.md),
 [port/windows](port/windows/README.md), [port/android](port/android/README.md)
 and [port/web](port/web/README.md).
+
+Apple TV: [port/tvos](port/tvos/README.md) builds a personal app with your
+own game data built in, because tvOS cannot import a disc image.
