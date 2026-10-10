@@ -34,13 +34,15 @@ SCREENS = {
         "screen": "video_settings_screen",
         "header": ("header_profile_video_settings", f"{PE}/video_settings/header_profile_video_settings"),
         # (closer than the other screens' rows, and the help lower, for all
-        # twelve places to fit above it)
-        "spacing": 24,
+        # thirteen places to fit above it)
+        "spacing": 22,
         "help_top": 364,
         # (rows in the place of the row before them: Window Size in
         # Resolution's, port/linux/game/menu_functions.c showing the one the
-        # display mode chosen uses; Android's anti-aliasing in the desktop's)
-        "same_place": ["display.window_size", "anti_aliasing_android"],
+        # display mode chosen uses; Android's anti-aliasing in the desktop's;
+        # the render height, only in the touch layout, in the frame rate
+        # limit's, which that layout does not show)
+        "same_place": ["display.window_size", "anti_aliasing_android", "render_height"],
         "rows": [
             ("DISPLAY MODE:", "display.mode",
              [("FULLSCREEN", "fullscreen"), ("BORDERLESS", "borderless"), ("WINDOWED", "windowed")],
@@ -62,6 +64,12 @@ SCREENS = {
              [("AUTO", "0"), ("30", "30"), ("60", "60"), ("120", "120"), ("144", "144"), ("165", "165"),
               ("240", "240"), ("NONE", "-1")],
              "With V-Sync off, the most frames a second. Auto:\ntwice the display's refresh rate.", "desktop"),
+            # (iOS only: display.render_height is in its config alone)
+            ("RENDER HEIGHT:", "display.render_height",
+             [("NATIVE", "0"), ("1440", "1440"), ("1200", "1200"), ("1080", "1080"), ("900", "900"),
+              ("720", "720")],
+             "Draws fewer pixels, upscaled; applies after the\nrestart. MetalFX upscales from it (720 if NATIVE).",
+             "ios"),
             ("SMOOTH MOTION:", "display.interpolation", ON_OFF,
              "Draw a frame for every display refresh, blending\nbetween the game's 30 ticks a second.", None),
             ("INSTANT AIM:", "display.direct_camera", ON_OFF,
@@ -70,6 +78,9 @@ SCREENS = {
              "Draw the HUD from the high-res redraws; off\ndraws the game's own pictures.", None),
             ("HIGH-RES TEXT:", "display.high_res_text", ON_OFF,
              "Draw text and titles with high-res fonts; off\ndraws the game's own.", None),
+            ("FIELD OF VIEW:", "display.field_of_view",
+             [(f"{value:g}", f"{value:g}") for value in range(60, 111, 5)],
+             "The first-person view's field of view. 70 is the\ngame's own; only the picture changes.", None),
             ("ANTI-ALIASING:", "display.anti_aliasing",
              [("OFF", "off"), ("FXAA", "fxaa"), ("SMAA", "smaa"), ("SSAA 2X", "ssaa2x"), ("MSAA 2X", "msaa2x"),
               ("MSAA 4X", "msaa4x"), ("MSAA 8X", "msaa8x")],

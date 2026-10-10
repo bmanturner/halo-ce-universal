@@ -105,8 +105,10 @@ static const struct config_setting config_settings[] =
 #ifdef HALO_IOS
 	{ "display.render_height", _config_integer, "0", "HALO_RENDER_HEIGHT", _environment_value, _platform_mobile,
 		"Internal rendering height in physical pixels: 0 (default) uses native\n"
-		"display resolution. Try 1080, 720 or 480 for lower GPU/battery use.\n"
-		"The selected aspect ratio is preserved; changes apply on relaunch." },
+		"display resolution; lower heights (1440, 1200, 1080, 900, 720) draw\n"
+		"fewer pixels and are upscaled to the display. The selected aspect ratio\n"
+		"is preserved; changes apply on relaunch. With MetalFX upscaling on, the\n"
+		"picture is upscaled from this height, and from 720 when this is 0." },
 #endif
 	{ "display.vsync", _config_boolean, "true", "HALO_NO_VSYNC", _environment_set_is_false, _platform_all,
 		"Wait for the display between frames; false draws as fast as possible." },
@@ -150,6 +152,9 @@ static const struct config_setting config_settings[] =
 	{ "display.player_name_scale", _config_real, "1.0", "HALO_PLAYER_NAME_SCALE", _environment_value, _platform_all,
 		"How large the players' names are drawn: 1.0 three quarters of the size of\n"
 		"the HUD's text, 0.25 to 4." },
+	{ "display.field_of_view", _config_real, "70", "HALO_FIELD_OF_VIEW", _environment_value, _platform_all,
+		"The first-person view's field of view in degrees, 60 to 110: 70 is the\n"
+		"game's own. Only the picture changes (the view's zoom keeps its ratio)." },
 	{ "display.scoreboard_team_layout", _config_string, "\"teams\"", "HALO_SCOREBOARD_TEAM_LAYOUT", _environment_value,
 		_platform_all,
 		"How the scoreboard lists a team game's players: \"teams\" in a column for\n"

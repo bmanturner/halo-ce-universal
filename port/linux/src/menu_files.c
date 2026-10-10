@@ -387,7 +387,8 @@ static long current_line(struct reader *reader)
 	return (long)XML_GetCurrentLineNumber(reader->parser);
 }
 
-/* whether the element is for this platform (its platform attribute) */
+/* whether the element is for this platform (its platform attribute): "ios"
+is the touch layout of iOS alone, for what only its config has */
 static int for_this_platform(struct reader *reader, const XML_Char **attributes)
 {
 	int index;
@@ -398,12 +399,14 @@ static int for_this_platform(struct reader *reader, const XML_Char **attributes)
 		{
 			const char *platform = attributes[index + 1];
 
-			if (strcmp(platform, "desktop") && strcmp(platform, "android"))
+			if (strcmp(platform, "desktop") && strcmp(platform, "android") && strcmp(platform, "ios"))
 			{
-				reader_error(reader, "platform=\"%s\" is not \"desktop\" or \"android\"", platform);
+				reader_error(reader, "platform=\"%s\" is not \"desktop\", \"android\" or \"ios\"", platform);
 				return 1;
 			}
 #ifdef HALO_IOS
+			if (!strcmp(platform, "ios"))
+				return !getenv("HALO_DESKTOP_INPUT");
 			return !strcmp(platform, getenv("HALO_DESKTOP_INPUT") ? "desktop" : "android");
 #elif defined(HALO_ANDROID)
 			return !strcmp(platform, "android");

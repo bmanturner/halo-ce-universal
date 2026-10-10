@@ -1154,6 +1154,35 @@ static void screenshot_record(
 	return;
 }
 
+/* port: display.field_of_view, the first-person view's field of view in
+degrees, from the platform layer (port/linux/src/port_config.c). The game's own
+is 70. It scales the tangent the render camera is made from, so the
+observer's field of view (which the co-op host sends) is never changed. */
+double config_real(const char *name);
+unsigned long config_changes(void);
+
+static real main_first_person_field_of_view_scale(
+	void)
+{
+	static real scale = 1.0f;
+	static unsigned long read_at = (unsigned long)-1;
+
+	/* (read again when Settings changes it) */
+	if (read_at != config_changes())
+	{
+		double degrees = config_real("display.field_of_view");
+
+		read_at = config_changes();
+		degrees = PIN(degrees, 60.0, 110.0);
+		scale = (degrees == 70.0) ?
+			1.0f :
+			(real)(tan(degrees * 0.5 * (3.14159265358979323846 / 180.0)) /
+				tan(35.0 * (3.14159265358979323846 / 180.0)));
+	}
+
+	return scale;
+}
+
 void set_window_camera_values(
 	struct render_window *window,
 	struct observer_result const *observer)
@@ -1166,7 +1195,11 @@ void set_window_camera_values(
 		window->rasterizer_camera.vertical_field_of_view =
 			2.0f * arctangent(
 				0.75f * render_camera_get_adjusted_field_of_view_tangent(
-					observer->field_of_view),
+					observer->field_of_view) *
+				((window->local_player_index != NONE &&
+					director_get_perspective(window->local_player_index) == _director_perspective_first_person &&
+					!cinematic_in_progress()) ?
+					main_first_person_field_of_view_scale() : 1.0f),
 				1.0f);
 
 		if (window->local_player_index != NONE &&
