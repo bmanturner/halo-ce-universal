@@ -12,9 +12,15 @@
 #define POOL_START 0x01000000u
 #define POOL_END 0x78000000u
 #define POOL_PAGES ((POOL_END-POOL_START)/PAGE)
+/* Custom Edition's tag cache sits at a fixed guest address inside the pool.
+   Its pages are marked used at start so host_low_map never hands them out. */
+#define CE_START 0x40440000u
+#define CE_BYTES 0x01700000u
+#define CE_END (CE_START+CE_BYTES)
 #define WINDOW_PAGES (HALO_GUEST_WINDOW_SIZE/PAGE)
 uintptr_t host_arena;
 static unsigned char allocated[POOL_PAGES];
+static int ce_mapped;
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static uint32_t serial = 1;
 static uint32_t generations[WINDOW_PAGES];
@@ -28,6 +34,9 @@ static size_t rounded(size_t n) { return (n + PAGE - 1) & ~(size_t)(PAGE-1); }
 static int in_window(uint32_t p, uint64_t n) {
     return p >= HALO_GUEST_WINDOW_BASE && (uint64_t)p+n <= (uint64_t)HALO_GUEST_WINDOW_BASE+HALO_GUEST_WINDOW_SIZE;
 }
+static int in_custom_edition(uint32_t p, uint64_t n) {
+    return p >= CE_START && (uint64_t)p+n <= CE_END;
+}
 
 int host_memory_initialize(uint32_t image_base, uint32_t image_size) {
     (void)image_base; (void)image_size;
@@ -39,6 +48,7 @@ int host_memory_initialize(uint32_t image_base, uint32_t image_size) {
     }
     host_arena = arena;
     if (mprotect(host_pointer(HALO_GUEST_WINDOW_BASE),HALO_GUEST_WINDOW_SIZE,PROT_READ|PROT_WRITE)) return -1;
+    memset(allocated+(CE_START-POOL_START)/PAGE,1,CE_BYTES/PAGE);
     host_logf(HOST_LOG_INFO,"guest arena at %llx, native pages %d",(unsigned long long)arena,getpagesize());
     return 0;
 }
@@ -78,12 +88,21 @@ long host_guest_mmap(uint64_t address,uint64_t size,int protection,int flags,int
     if (!size || size>0x70000000ull || address+size>0x100000000ull) return -22;
     void *p;
     if (flags & (0x10|0x100000)) {
-        if (!in_window((uint32_t)address,size)) return -22;
-        p=host_pointer(address);
         uint32_t first=(uint32_t)address & ~(PAGE-1);
-        size_t length=rounded(address+size-first);
-        if (mprotect(host_pointer(first),length,PROT_READ|PROT_WRITE)) return -12;
-        memset(p,0,size);
+        p=host_pointer(address);
+        if (in_custom_edition((uint32_t)address,size)) {
+            /* the arena's pages are demand-zero, so no memset */
+            pthread_mutex_lock(&lock);
+            if ((flags&0x100000) && ce_mapped) {pthread_mutex_unlock(&lock); return -17;}
+            void *mapped=mmap(host_pointer(first),rounded(address+size-first),PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANON|MAP_FIXED,-1,0);
+            if (mapped==host_pointer(first)) ce_mapped=1;
+            pthread_mutex_unlock(&lock);
+            if (mapped!=host_pointer(first)) return -12;
+        } else {
+            if (!in_window((uint32_t)address,size)) return -22;
+            if (mprotect(host_pointer(first),rounded(address+size-first),PROT_READ|PROT_WRITE)) return -12;
+            memset(p,0,size);
+        }
     } else {
         p=host_low_map(size,PROT_READ|PROT_WRITE);
         if (!p) return -12;
@@ -100,6 +119,12 @@ long host_guest_mmap(uint64_t address,uint64_t size,int protection,int flags,int
 long host_guest_munmap(uint64_t address,uint64_t size) {
     if (address+size>0x100000000ull) return -22;
     if (in_window(address,size)) return 0;
+    if (address<CE_END && address+size>CE_START) {
+        /* the tag cache stays reserved and mapped; only the parts outside go back */
+        if (address<CE_START) host_low_unmap(host_pointer(address),CE_START-address);
+        if (address+size>CE_END) host_low_unmap(host_pointer(CE_END),address+size-CE_END);
+        return 0;
+    }
     host_low_unmap(host_pointer(address),size); return 0;
 }
 long host_guest_mprotect(uint64_t address,uint64_t size,int protection) {

@@ -106,15 +106,19 @@ int main(int argc,char **argv) {
             width=(480*longer/shorter)&~1;
             pixel_width=(int)(longer*density+0.5f);pixel_height=(int)(shorter*density+0.5f);
         }
-        char env_config[1200],env_data[1200],env_save[1200],env_width[64],env_pixel_width[64],env_pixel_height[64];
+        char env_config[1200],env_data[1200],env_save[1200],env_custom[1200],env_width[64],env_pixel_width[64],env_pixel_height[64];
         snprintf(env_config,sizeof(env_config),"HALO_CONFIG_ROOT=%s",documents.fileSystemRepresentation);
         snprintf(env_data,sizeof(env_data),"HALO_DATA_ROOT=%s",data_root);
         snprintf(env_save,sizeof(env_save),"HALO_SAVE_ROOT=%s",save_root);
+        /* Custom Edition maps live outside the game-<UUID> folder so a re-import keeps them */
+        NSString *customEdition=[documents stringByAppendingPathComponent:@"CustomEdition"];
+        [NSFileManager.defaultManager createDirectoryAtPath:[customEdition stringByAppendingPathComponent:@"maps"] withIntermediateDirectories:YES attributes:nil error:nil];
+        snprintf(env_custom,sizeof(env_custom),"HALO_CUSTOM_EDITION_ROOT=%s",customEdition.fileSystemRepresentation);
         snprintf(env_width,sizeof(env_width),"HALO_DISPLAY_WIDTH=%d",width);
         snprintf(env_pixel_width,sizeof(env_pixel_width),"HALO_DISPLAY_PIXEL_WIDTH=%d",pixel_width);
         snprintf(env_pixel_height,sizeof(env_pixel_height),"HALO_DISPLAY_PIXEL_HEIGHT=%d",pixel_height);
         const char *env[32];size_t env_count=0;
-        env[env_count++]=env_config;env[env_count++]=env_data;env[env_count++]=env_save;env[env_count++]=env_width;
+        env[env_count++]=env_config;env[env_count++]=env_data;env[env_count++]=env_save;env[env_count++]=env_custom;env[env_count++]=env_width;
         env[env_count++]=env_pixel_width;env[env_count++]=env_pixel_height;
 #if TARGET_OS_TV
         char env_render[64];

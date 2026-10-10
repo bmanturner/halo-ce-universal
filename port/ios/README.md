@@ -257,9 +257,16 @@ desktop display rows (mode, resolution, window size, scaling) do nothing: the
 ILP32 platform layer compiles that window code out. iOS asks for microphone
 access the first time voice opens the microphone (open mic, or push-to-talk on
 a hardware keyboard's V); there is no touch or controller push-to-talk button.
-Halo Custom Edition maps are not available on Apple: their fixed tag-cache
-window lies outside the arena's mappable Xbox window, so the reservation fails
-and only Xbox maps load.
+Halo Custom Edition maps run on Apple. The guest's 23 MB tag cache has a fixed
+address inside the arena's general pool; the host marks those pages used at
+start and hands them to the reservation (host_memory.c), so they never go to
+another allocation. To play them, copy the Custom Edition maps plus
+bitmaps.map, sounds.map and loc.map from a Halo PC / Custom Edition install
+into Files > Halo (the app) > CustomEdition > maps (the app creates the
+folder, and the same CustomEdition folder in the app's data on the Mac). It
+sits beside, not inside, the imported game's folder, so re-importing the game
+keeps it. The Xbox-sized texture and sound caches can make very large
+community maps draw default textures.
 
 Upstream commit `c9ee319a` added 28 bytes of PC game rules to the settings
 record (network version 11). The relevant rule logic and record layout are

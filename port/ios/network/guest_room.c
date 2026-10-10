@@ -35,7 +35,6 @@ void ios_room_open(void) {
         if(action==2) { p2p_lobby_refresh(); continue; }
         if(action<0)break;
         if(action==1) {
-            if(strstr(chosen.map,"@ce")) {host_ios_browser_error("This server requires a Halo PC / Custom Edition map, which this build cannot load.");continue;}
             if(!chosen.open || chosen.player_count>=chosen.maximum_player_count) {
                 host_ios_browser_error("This server is full or is not accepting players."); continue;
             }

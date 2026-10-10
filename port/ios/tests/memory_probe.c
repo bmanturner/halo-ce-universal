@@ -37,6 +37,26 @@ int main(void) {
     unsigned *p=host_low_map(16384,PROT_READ|PROT_WRITE);*p=1234;
     host_low_unmap(p,16384);p=host_low_map(16384,PROT_READ|PROT_WRITE);
     if(*p)return 3;
-    printf("PASS: concurrent page tracking, generation %u; reused mmap zeroed\n",generation);
+    /* Custom Edition's tag cache: a fixed range inside the general pool */
+    const uint64_t ce=0x40440000u,ce_bytes=0x01700000u,fixed_noreplace=0x100000|0x20;
+    if(host_guest_mmap(ce,ce_bytes,PROT_READ|PROT_WRITE,fixed_noreplace,-1,0)!=(long)ce)return 5;
+    if(host_guest_mmap(ce,ce_bytes,PROT_READ|PROT_WRITE,fixed_noreplace,-1,0)!=-17)return 6;
+    if(host_guest_mmap(ce-0x4000,ce_bytes,PROT_READ|PROT_WRITE,fixed_noreplace,-1,0)>=0)return 7;
+    if(host_guest_mmap(ce+0x4000,ce_bytes,PROT_READ|PROT_WRITE,fixed_noreplace,-1,0)>=0)return 7;
+    volatile unsigned char *cache=host_pointer(ce);cache[0]=7;cache[ce_bytes-1]=9;
+    if(host_guest_munmap(ce,ce_bytes)||host_guest_munmap(ce+0x8000,0x4000))return 8;
+    if(cache[0]!=7||cache[ce_bytes-1]!=9)return 8;
+    if(host_guest_mmap(ce,ce_bytes,PROT_READ|PROT_WRITE,fixed_noreplace,-1,0)!=-17)return 8;
+    int past=0;
+    for(int i=0;i<80;i++){
+        uintptr_t m=guest_pointer(host_low_map(0x1000000,PROT_READ|PROT_WRITE));
+        if(!m)break;
+        if(m<ce+ce_bytes&&m+0x1000000>ce)return 9;
+        if(m>=ce+ce_bytes)past=1;
+    }
+    if(!past)return 9;
+    if(host_guest_mmap(0x80030000,0x8000,PROT_READ|PROT_WRITE,fixed_noreplace,-1,0)!=0x80030000)return 10;
+    if(host_guest_mmap(0x7ff00000,0x8000,PROT_READ|PROT_WRITE,fixed_noreplace,-1,0)>=0)return 10;
+    printf("PASS: concurrent page tracking, generation %u; reused mmap zeroed; Custom Edition range fixed, kept across unmap, never pooled\n",generation);
     return 0;
 }
