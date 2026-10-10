@@ -7,6 +7,10 @@ from [OpenCommunityEdition/OpenCE](https://github.com/OpenCommunityEdition/OpenC
 by way of [AttilaTheFun/halo-ce-universal](https://github.com/AttilaTheFun/halo-ce-universal)'s
 Apple port.
 
+Up to date with OpenCE's `main` at
+[`9da2a45f`](https://github.com/OpenCommunityEdition/OpenCE/commit/9da2a45ffa364b720ae9faab6a1dee876926fe42)
+(2026-10-10).
+
 ## This fork
 
 I fixed some stuff on iOS. Now that it works, I'm just adding stuff I like.
