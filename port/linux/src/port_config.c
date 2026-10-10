@@ -109,6 +109,10 @@ static const struct config_setting config_settings[] =
 		"fewer pixels and are upscaled to the display. The selected aspect ratio\n"
 		"is preserved; changes apply on relaunch. With MetalFX upscaling on, the\n"
 		"picture is upscaled from this height, and from 720 when this is 0." },
+	{ "display.frame_rate", _config_integer, "0", "HALO_FRAME_RATE", _environment_value, _platform_mobile,
+		"0 for a frame each display refresh (Smooth Motion); 30 for the Xbox's 30\n"
+		"a second, not blended; above 30 (60) for Smooth Motion held to at most\n"
+		"that many a second. On the iPad this replaces display.interpolation." },
 #endif
 	{ "display.vsync", _config_boolean, "true", "HALO_NO_VSYNC", _environment_set_is_false, _platform_all,
 		"Wait for the display between frames; false draws as fast as possible." },

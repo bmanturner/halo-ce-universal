@@ -16,10 +16,92 @@
 #include <GLES2/gl2ext.h>
 #include <dlfcn.h>
 #include <string.h>
+#include <stdatomic.h>
+#include <mach/mach_time.h>
 #include "host_graphics.h"
 #include "host_shader_cache.h"
 #include "host_debug.h"
 #include "ios_host.h"
+
+/* ANGLE's Metal backend ignores the swap interval and display link frame rate
+   votes did nothing, so a frame rate cap is a deadline limiter placed right
+   before the present. */
+static _Atomic unsigned frameRateCap;
+/* The panel's refresh period in nanoseconds, 0 until known. */
+static _Atomic uint64_t refreshNanoseconds;
+static SDL_Window *presentWindow;
+#if !HALO_MACOS
+/* Only measures the panel; it keeps the default frame rate range so it casts
+   no vote. The system pauses it in the background. */
+static CADisplayLink *refreshLink;
+@interface HaloRefreshTimer : NSObject
+- (void)tick:(CADisplayLink *)link;
+@end
+@implementation HaloRefreshTimer
+- (void)tick:(CADisplayLink *)link {
+    double period=link.targetTimestamp-link.timestamp;
+    if(period>0)atomic_store(&refreshNanoseconds,(uint64_t)(period*1e9));
+}
+@end
+static HaloRefreshTimer *refreshTimer;
+static void refresh_link_update(void) {
+    dispatch_async(dispatch_get_main_queue(),^{
+        BOOL wanted=atomic_load(&frameRateCap)!=0;
+        if(!refreshLink) {
+            if(!wanted)return;
+            refreshTimer=[HaloRefreshTimer new];
+            refreshLink=[CADisplayLink displayLinkWithTarget:refreshTimer selector:@selector(tick:)];
+            [refreshLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+        }
+        refreshLink.paused=!wanted;
+    });
+}
+#endif
+
+void host_ios_set_frame_rate(unsigned int frames_per_second) {
+    if(atomic_exchange(&frameRateCap,frames_per_second)==frames_per_second)return;
+    if(frames_per_second)host_logf(HOST_LOG_INFO,"frame rate: at most %u a second",frames_per_second);
+    else host_logf(HOST_LOG_INFO,"frame rate: the display's");
+#if HALO_MACOS
+    if(frames_per_second) {
+        SDL_DisplayID displayID=presentWindow?SDL_GetDisplayForWindow(presentWindow):SDL_GetPrimaryDisplay();
+        const SDL_DisplayMode *mode=displayID?SDL_GetCurrentDisplayMode(displayID):NULL;
+        atomic_store(&refreshNanoseconds,mode && mode->refresh_rate>0?(uint64_t)(1e9/mode->refresh_rate):0);
+    }
+#else
+    refresh_link_update();
+#endif
+}
+
+/* Render thread, immediately before the present. A panel already refreshing
+   no faster than the cap (Low Power Mode) paces itself; limiting it as well
+   made it stutter. */
+void halo_graphics_pace_frame(void) {
+    static unsigned appliedCap;
+    static uint64_t deadline;
+    static mach_timebase_info_data_t timebase;
+    unsigned cap=atomic_load_explicit(&frameRateCap,memory_order_relaxed);
+    if(!cap) {
+        appliedCap=0;
+        return;
+    }
+    if(!timebase.denom)mach_timebase_info(&timebase);
+    if(cap!=appliedCap) {
+        appliedCap=cap;
+        deadline=0;
+    }
+    uint64_t period=(uint64_t)(1e9/cap);
+    uint64_t refresh=atomic_load(&refreshNanoseconds);
+    if(refresh && refresh+500000>=period) {
+        deadline=0;
+        return;
+    }
+    uint64_t interval=period*timebase.denom/timebase.numer;
+    uint64_t now=mach_absolute_time();
+    if(deadline==0 || (int64_t)(now-deadline)>(int64_t)interval)deadline=now;
+    deadline+=interval;
+    if(deadline>now)mach_wait_until(deadline);
+}
 
 static BOOL metal;
 static void *eglLibrary,*glesLibrary;
@@ -70,6 +152,7 @@ int halo_graphics_has_extension(const char *name) {
     return 0;
 }
 void *halo_graphics_create(SDL_Window *window) {
+    presentWindow=window;
     NSString *frameworks=NSBundle.mainBundle.privateFrameworksPath;
     glesLibrary=dlopen([[frameworks stringByAppendingPathComponent:@"libGLESv2.framework/libGLESv2"] fileSystemRepresentation],RTLD_NOW|RTLD_LOCAL);
     eglLibrary=dlopen([[frameworks stringByAppendingPathComponent:@"libEGL.framework/libEGL"] fileSystemRepresentation],RTLD_NOW|RTLD_LOCAL);

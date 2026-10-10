@@ -41,8 +41,10 @@ SCREENS = {
         # Resolution's, port/linux/game/menu_functions.c showing the one the
         # display mode chosen uses; Android's anti-aliasing in the desktop's;
         # the render height, only in the touch layout, in the frame rate
-        # limit's, which that layout does not show)
-        "same_place": ["display.window_size", "anti_aliasing_android", "render_height"],
+        # limit's, which that layout does not show; the frame rate, only in
+        # the touch layout, in Smooth Motion's, which it replaces there)
+        "same_place": ["display.window_size", "anti_aliasing_android", "render_height",
+                       "display.frame_rate"],
         "rows": [
             ("DISPLAY MODE:", "display.mode",
              [("FULLSCREEN", "fullscreen"), ("BORDERLESS", "borderless"), ("WINDOWED", "windowed")],
@@ -71,7 +73,10 @@ SCREENS = {
              "Draws fewer pixels, upscaled; applies after the\nrestart. MetalFX upscales from it (720 if NATIVE).",
              "ios"),
             ("SMOOTH MOTION:", "display.interpolation", ON_OFF,
-             "Draw a frame for every display refresh, blending\nbetween the game's 30 ticks a second.", None),
+             "Draw a frame for every display refresh, blending\nbetween the game's 30 ticks a second.", "!ios"),
+            ("FRAME RATE:", "display.frame_rate",
+             [("DISPLAY", "0"), ("60", "60"), ("30 CLASSIC", "30")],
+             "Display: a frame each refresh. 60 saves power;\n30 Classic is the Xbox's, not blended.", "ios"),
             ("INSTANT AIM:", "display.direct_camera", ON_OFF,
              "In first person, turn the view the moment the\nmouse moves, not up to two ticks later.", "desktop"),
             ("HIGH-RES HUD:", "display.high_res_hud", ON_OFF,

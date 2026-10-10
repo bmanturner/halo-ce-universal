@@ -16,6 +16,9 @@ and the debug keyboard that the game's console reads.
 #include "p2p.h"
 #include "xiso.h"
 #include "touch_input.h"
+#ifdef HALO_IOS
+#include "guest_host.h"
+#endif
 
 #include <SDL3/SDL.h>
 #include <stdio.h>
@@ -364,7 +367,21 @@ int halo_interpolation_enabled(void)
 	if (read_at != config_changes())
 	{
 		read_at = config_changes();
+#ifdef HALO_IOS
+		{
+			/* display.frame_rate: 1 to 30 is the Xbox's 30 a second, not
+			blended; above 30 is blended, which the host holds to that rate
+			(0 and below: the display's). The touch layout has no Smooth
+			Motion row, so the rate alone decides there. */
+			long frame_rate = config_integer("display.frame_rate");
+			int classic = frame_rate >= 1 && frame_rate <= 30;
+
+			enabled = !classic && (!getenv("HALO_DESKTOP_INPUT") || config_boolean("display.interpolation"));
+			host_ios_set_frame_rate(frame_rate > 30 ? (unsigned int)frame_rate : 0);
+		}
+#else
 		enabled = config_boolean("display.interpolation");
+#endif
 	}
 	return enabled;
 }

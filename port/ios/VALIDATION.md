@@ -6,6 +6,44 @@ This record applies to `apple/ios-upstream-merge` (from
 `3f2c14101d3ae1c7f0c0a11993a43407fadbeb46`. Updated 2026-10-09.
 Reports of gameplay on the original iOS fork are not validation of this merge.
 
+## Frame rate setting — 2026-10-10
+
+`display.frame_rate` (iOS): Video Settings' FRAME RATE row (DISPLAY, 60,
+30 CLASSIC) in SMOOTH MOTION's place on the touch layout (menu platform
+`!ios` for SMOOTH MOTION). 30 is the Xbox's path; above 30 is Smooth Motion
+capped by the host (`halo_graphics_pace_frame`, before the ANGLE swap and the
+MetalFX present), skipped while the panel refreshes no faster than the cap.
+
+Why this design (measured with throwaway probes on the iPad Pro 11", M2):
+ANGLE Metal ignores `eglSwapInterval` 0 and 2; `CADisplayLink`
+`preferredFrameRateRange` (60,60,60), even with SDL's (80,120,120) link
+lowered too, left presents at 120 fps; a deadline limiter before the present
+gave 60.0 fps with every interval 14-19 ms. With Low Power Mode the panel
+refreshes at 60 Hz (a display link's `targetTimestamp - timestamp` is
+16.67 ms, 8.34 ms otherwise), the game already presents 60.0 fps, and the same
+limiter made it stutter (53-56 fps, about 8% of frames 33 ms or longer), hence
+the check.
+
+Results (Blood Gulch hosted by `debug.network_test`, `look:1`, MSAA 2x,
+render height 1440; frames counted from `debug.gpu_stats`):
+
+| Setting | Low Power Mode | fps | Slowest 1 s window |
+| --- | --- | --- | --- |
+| DISPLAY | on | 60.0 | 59.8 |
+| 60 | on | 60.0 | 59.8 |
+| 30 CLASSIC | on | 30.0 | 30.0 |
+| 60, MetalFX | on | 60.0 | 59.9 |
+| DISPLAY | off | 119.9 | 116.0 |
+| 60 | off | 59.7 | 56.5 |
+| 30 CLASSIC | off | 30.0 | 30.0 |
+| 60, MetalFX | off | 59.9 | 58.6 |
+| DISPLAY, MetalFX | off | 119.8 | 116.1 |
+
+Changing the row in the menu applied at once: the log showed
+`frame rate: at most 60 a second` and `frame rate: the display's`, and the
+menu ran at 120, then 60, then 120 fps. Not measured: the on-screen cadence
+(ANGLE reports no presentation times) and battery use.
+
 ## Upstream merge — main `6a74eab5`, 2026-10-09
 
 Merged 27 upstream commits: Android touch menus (`touch_input.c`,

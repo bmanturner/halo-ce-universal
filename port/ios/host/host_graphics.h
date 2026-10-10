@@ -11,6 +11,10 @@ void *halo_graphics_create(struct SDL_Window *window);
 int halo_graphics_make_current(void);
 int halo_graphics_swap(void);
 int halo_graphics_swap_interval(int interval);
+/* Frame rate cap (0 = none); halo_graphics_pace_frame waits for the next frame
+   slot and belongs on the render thread right before the present. */
+void host_ios_set_frame_rate(unsigned int frames_per_second);
+void halo_graphics_pace_frame(void);
 /* IOSurface ownership is transferred to/from ANGLE around each MetalFX copy.
    Each slot is one IOSurface-backed GL texture; MetalFX double-buffers them. */
 #define HALO_GRAPHICS_SHARED_SLOTS 2

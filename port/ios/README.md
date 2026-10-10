@@ -178,6 +178,17 @@ the drawable and GPU texture limit. Existing configuration files without
 `render_height` automatically use native resolution. Apple graphics diagnostics
 are available from the shake modal or Mac Settings window, as described below.
 
+### Frame rate
+
+`display.frame_rate` (the FRAME RATE row in Video Settings) replaces Smooth
+Motion on the touch layout, and `display.interpolation` is not used there. `0`
+(DISPLAY) draws a frame for each refresh of the display; `30` (30 CLASSIC) is
+the Xbox's 30 frames each second, not blended; above `30` (the menu offers 60)
+is Smooth Motion capped at that rate. ANGLE's Metal backend ignores the swap
+interval, so the host paces the frames itself, just before presenting. It does
+not pace them when the display already refreshes no faster than the cap, such
+as in Low Power Mode. The Mac app keeps the SMOOTH MOTION row.
+
 ### Touch and controller input
 
 The left stick moves and the right stick aims. The four arrows navigate menus.
