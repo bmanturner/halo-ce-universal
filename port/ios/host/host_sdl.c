@@ -14,6 +14,7 @@ so the audio callback is handed to a thread that has one.
 #include "host.h"
 
 #include <SDL3/SDL.h>
+#include <TargetConditionals.h>
 #include <limits.h>
 #include <pthread.h>
 #include <string.h>
@@ -146,6 +147,12 @@ uint32_t host_sdl_create_window(const char *title, int width, int height, int64_
 	#if HALO_MACOS
     flags=(flags & ~SDL_WINDOW_FULLSCREEN) | SDL_WINDOW_RESIZABLE;
     width=1280;height=720;
+#endif
+#if TARGET_OS_TV
+    /* The Apple TV screen is 1920x1080 points at scale 2. The TV scales a 1080p
+       drawable to 4K itself; a 4K drawable cost about 0.9 ms of GPU time a
+       frame on the A15. */
+    flags&=~(int64_t)SDL_WINDOW_HIGH_PIXEL_DENSITY;
 #endif
     if(halo_graphics_metal())flags=(flags & ~SDL_WINDOW_OPENGL) | SDL_WINDOW_METAL;
 	return handle_new(_handle_window, SDL_CreateWindow(title, width, height, (SDL_WindowFlags)flags));

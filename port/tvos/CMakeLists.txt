@@ -60,9 +60,23 @@ execute_process(COMMAND git describe --always --dirty WORKING_DIRECTORY "${ROOT}
     OUTPUT_VARIABLE HALO_BUILD_REVISION OUTPUT_STRIP_TRAILING_WHITESPACE)
 target_compile_definitions(HaloCE PRIVATE HALO_BUILD_REVISION="${HALO_BUILD_REVISION}")
 
-# No ANGLE frameworks are embedded yet: tvOS draws with Apple's OpenGL ES
-# until an ANGLE tvOS slice is packaged. host_graphics.m picks ANGLE
-# automatically once its frameworks are in the bundle.
+# ANGLE (Metal-backed OpenGL ES) is built from source at the iPhone package's
+# revision by tools/tvos_angle.py, because that package has no tvOS slice.
+# host_graphics.m picks ANGLE when its frameworks are in the bundle; Apple's
+# OpenGL ES stays the fallback without them. Embedded without linking, so
+# explicit symbol dispatch keeps Apple's GLES symbols separate from ANGLE's.
+set(ANGLE_ROOT "${ROOT}/build/third_party/angle-tvos/dist")
+set(ANGLE_EGL "${ANGLE_ROOT}/EGL.xcframework/tvos-arm64/libEGL.framework")
+set(ANGLE_GLES "${ANGLE_ROOT}/GLESv2.xcframework/tvos-arm64/libGLESv2.framework")
+if(NOT IS_DIRECTORY "${ANGLE_EGL}" OR NOT IS_DIRECTORY "${ANGLE_GLES}")
+    message(FATAL_ERROR "ANGLE for tvOS is missing; run tools/tvos_build.py, which builds it with tools/tvos_angle.py")
+endif()
+set_target_properties(HaloCE PROPERTIES
+    XCODE_EMBED_FRAMEWORKS "${ANGLE_EGL};${ANGLE_GLES}"
+    XCODE_EMBED_FRAMEWORKS_CODE_SIGN_ON_COPY YES
+    XCODE_EMBED_FRAMEWORKS_REMOVE_HEADERS_ON_COPY YES
+    XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "@executable_path/Frameworks"
+    XCODE_ATTRIBUTE_COPY_PHASE_STRIP NO)
 
 # Personal build (port/apple/DISTRIBUTION.md): the user's own maps go into the
 # bundle. Xcode signs the bundle after this step. Not VERBATIM: the bundle path

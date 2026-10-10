@@ -3,6 +3,10 @@
 
 The Xbox maps (and optionally Custom Edition maps) are copied into the app
 bundle, so the app is a personal build, not for distribution.
+
+The first run also builds ANGLE (Metal-backed OpenGL ES) for tvOS from source
+with tools/tvos_angle.py, which downloads and builds about 7 GB and takes about
+10 minutes; later runs reuse it.
 """
 import argparse
 import os
@@ -12,6 +16,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tvos_angle
 
 ROOT = Path(__file__).resolve().parents[1]
 SDL_SOURCE = ROOT / 'build/third_party/SDL3'
@@ -80,6 +85,7 @@ def main():
     custom = map_folder(parser, '--custom-edition', args.custom_edition) if args.custom_edition else None
     run(sys.executable, 'tools/ios_build.py', '--guest-only')
     prepare_sdl()
+    tvos_angle.prepare(args.jobs)
     build = ROOT / 'build/tvos/app'
     run('cmake', '-S', 'port/tvos', '-B', build, '-G', 'Xcode', '-DCMAKE_SYSTEM_NAME=tvOS',
         '-DCMAKE_OSX_SYSROOT=appletvos', '-DCMAKE_OSX_ARCHITECTURES=arm64', '-DCMAKE_OSX_DEPLOYMENT_TARGET=17.0',
