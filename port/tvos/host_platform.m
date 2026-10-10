@@ -52,12 +52,14 @@ void host_ios_touch_initialize(void) {
         usingBlock:^(NSNotification *note) {latch_presses(note.object);}];
 }
 
-/* The game draws standard dynamic range at 60 frames a second. With Settings >
-   Video and Audio > Match Content > Match Dynamic Range on, tvOS switches the
-   TV to SDR while the game is in front, as it does for SDR video (and to 60 Hz
-   with Match Frame Rate), and back for the Home screen and other apps; HDR
-   video elsewhere still plays in HDR. Without matching, tvOS ignores this and
-   keeps the Format setting's mode. */
+/* The game draws standard dynamic range. With Settings > Video and Audio >
+   Match Content > Match Dynamic Range on, tvOS switches the TV to SDR while
+   the game is in front, as it does for SDR video, and back for the Home screen
+   and other apps; HDR video elsewhere still plays in HDR. The request names
+   the refresh rate the TV has at launch (the Format setting's), so Match Frame
+   Rate leaves it as it is; the game's Frame Rate setting paces its frames
+   within it. Without matching, tvOS ignores this and keeps the Format
+   setting's mode. */
 static void request_sdr_display(UIWindow *window) {
     NSDictionary *bt709=@{
         (__bridge NSString *)kCMFormatDescriptionExtension_ColorPrimaries:(__bridge NSString *)kCMFormatDescriptionColorPrimaries_ITU_R_709_2,
@@ -66,9 +68,11 @@ static void request_sdr_display(UIWindow *window) {
     CMVideoFormatDescriptionRef format=NULL;
     if(CMVideoFormatDescriptionCreate(kCFAllocatorDefault,kCMVideoCodecType_H264,1920,1080,(__bridge CFDictionaryRef)bt709,&format)!=noErr)return;
     AVDisplayManager *manager=window.avDisplayManager;
-    manager.preferredDisplayCriteria=[[AVDisplayCriteria alloc] initWithRefreshRate:60 formatDescription:format];
+    NSInteger refresh=window.windowScene.screen.maximumFramesPerSecond;
+    if(refresh<=0)refresh=60;
+    manager.preferredDisplayCriteria=[[AVDisplayCriteria alloc] initWithRefreshRate:(float)refresh formatDescription:format];
     CFRelease(format);
-    host_logf(HOST_LOG_INFO,"display: asked for SDR at 60 Hz (Match Content %s)",
+    host_logf(HOST_LOG_INFO,"display: asked for SDR at %ld Hz, the current refresh rate (Match Content %s)",(long)refresh,
         manager.displayCriteriaMatchingEnabled?"on":"off: the request is ignored");
     [NSNotificationCenter.defaultCenter addObserverForName:AVDisplayManagerModeSwitchEndNotification object:nil queue:nil
         usingBlock:^(NSNotification *note) {
