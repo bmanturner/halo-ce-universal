@@ -1,3 +1,6 @@
+#import <AVFoundation/AVFoundation.h>
+#import <AVKit/AVKit.h>
+#import <CoreMedia/CoreMedia.h>
 #import <GameController/GameController.h>
 #import <UIKit/UIKit.h>
 #include <limits.h>
@@ -48,6 +51,30 @@ void host_ios_touch_initialize(void) {
     [NSNotificationCenter.defaultCenter addObserverForName:GCControllerDidConnectNotification object:nil queue:nil
         usingBlock:^(NSNotification *note) {latch_presses(note.object);}];
 }
+
+/* The game draws standard dynamic range at 60 frames a second. With Settings >
+   Video and Audio > Match Content > Match Dynamic Range on, tvOS switches the
+   TV to SDR while the game is in front, as it does for SDR video (and to 60 Hz
+   with Match Frame Rate), and back for the Home screen and other apps; HDR
+   video elsewhere still plays in HDR. Without matching, tvOS ignores this and
+   keeps the Format setting's mode. */
+static void request_sdr_display(UIWindow *window) {
+    NSDictionary *bt709=@{
+        (__bridge NSString *)kCMFormatDescriptionExtension_ColorPrimaries:(__bridge NSString *)kCMFormatDescriptionColorPrimaries_ITU_R_709_2,
+        (__bridge NSString *)kCMFormatDescriptionExtension_TransferFunction:(__bridge NSString *)kCMFormatDescriptionTransferFunction_ITU_R_709_2,
+        (__bridge NSString *)kCMFormatDescriptionExtension_YCbCrMatrix:(__bridge NSString *)kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2};
+    CMVideoFormatDescriptionRef format=NULL;
+    if(CMVideoFormatDescriptionCreate(kCFAllocatorDefault,kCMVideoCodecType_H264,1920,1080,(__bridge CFDictionaryRef)bt709,&format)!=noErr)return;
+    AVDisplayManager *manager=window.avDisplayManager;
+    manager.preferredDisplayCriteria=[[AVDisplayCriteria alloc] initWithRefreshRate:60 formatDescription:format];
+    CFRelease(format);
+    host_logf(HOST_LOG_INFO,"display: asked for SDR at 60 Hz (Match Content %s)",
+        manager.displayCriteriaMatchingEnabled?"on":"off: the request is ignored");
+    [NSNotificationCenter.defaultCenter addObserverForName:AVDisplayManagerModeSwitchEndNotification object:nil queue:nil
+        usingBlock:^(NSNotification *note) {
+            host_logf(HOST_LOG_INFO,"display: mode switch finished");
+        }];
+}
 void host_ios_touch_attach(SDL_Window *window) {
     UIWindow *native=(__bridge UIWindow *)SDL_GetPointerProperty(SDL_GetWindowProperties(window),SDL_PROP_WINDOW_UIKIT_WINDOW_POINTER,NULL);
     /* Retire SDL's temporary launch window before entering the non-returning game loop. */
@@ -56,6 +83,7 @@ void host_ios_touch_attach(SDL_Window *window) {
             candidate.hidden=YES;
     }
     [native makeKeyAndVisible];
+    request_sdr_display(native);
     UIView *root=native.rootViewController.view;
     host_logf(HOST_LOG_INFO,"window attached, %.0fx%.0f",root.bounds.size.width,root.bounds.size.height);
 }
