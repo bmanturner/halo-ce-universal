@@ -42,7 +42,7 @@ static BOOL screenshot_requested;
 /* likewise the mouse buttons pressed since the last read, so that a click
 quicker than a frame still counts */
 static unsigned char mouse_buttons_pressed[PLATFORM_MOUSE_BUTTON_COUNT];
-#if !defined(HALO_ILP32) || defined(HALO_IOS)
+#ifndef HALO_ANDROID
 /* the menus' pointer (platform_ui_pointer_set_active), under input_lock */
 static struct platform_ui_pointer ui_pointer;
 static float ui_pointer_wheel;
@@ -122,7 +122,7 @@ BOOL platform_sdl_initialize(void)
 	if (p2p_hand_off_invite())
 		exit(EXIT_SUCCESS);
 	SDL_SetHint(SDL_HINT_APP_NAME, "Halo");
-#ifdef HALO_ILP32
+#if defined(HALO_ANDROID) || defined(HALO_IOS)
 	/* landscape only; the back key arrives as a key event (xinput_sdl.c)
 	instead of closing the activity */
 	SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
@@ -386,7 +386,7 @@ int halo_interpolation_enabled(void)
 	return enabled;
 }
 
-#ifndef HALO_ILP32
+#if !defined(HALO_ANDROID) && !defined(HALO_IOS)
 /* the display mode (display.mode, else display.fullscreen's: borderless or
 the window) */
 enum
@@ -770,7 +770,7 @@ SDL_AudioDeviceID platform_audio_device(int recording, const char *name)
 }
 #endif
 
-#ifndef HALO_ILP32
+#if !defined(HALO_ANDROID) && !defined(HALO_IOS)
 /* the window's size (platform_window_size_setting), as the window was made
 or last resized: platform_display_apply */
 static long platform_window_width = -1, platform_window_height = -1;
@@ -785,7 +785,7 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	if (!platform_sdl_initialize())
 		return FALSE;
 
-#ifdef HALO_ILP32
+#ifdef HALO_GLES
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
@@ -799,7 +799,7 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 0);
 	if (config_boolean("debug.gl_debug"))
 		SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG);
-#if !defined(HALO_ILP32) && !defined(_WIN32)
+#if !defined(HALO_ANDROID) && !defined(HALO_IOS) && !defined(_WIN32)
 	/* Mesa's GL thread: the renderer makes thousands of GL calls a frame
 	and never waits for their results, so handing them to a thread of
 	their own takes a fifth of the main thread's time off it. It leaves an
@@ -807,7 +807,7 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	setenv("mesa_glthread", "true", 0);
 #endif
 
-#ifdef HALO_ILP32
+#if defined(HALO_ANDROID) || defined(HALO_IOS)
 	{
 		int scale = (int)config_integer("display.window_scale");
 
@@ -838,7 +838,7 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 		platform_log("SDL_CreateWindow failed: %s", SDL_GetError());
 		return FALSE;
 	}
-#ifndef HALO_ILP32
+#if !defined(HALO_ANDROID) && !defined(HALO_IOS)
 	/* the game's icon, which the desktop shows for the window (on Windows
 	also halo.exe's own, port/windows/halo.rc) */
 	if (platform_window_icon_size)
@@ -853,7 +853,7 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	platform_fullscreen_kind_apply();
 #endif
 	platform_gl_context = SDL_GL_CreateContext(platform_window);
-#ifdef HALO_ILP32
+#ifdef HALO_GLES
 	/* ES 3.2 where the driver has it, otherwise the renderer makes do with
 	3.0 plus extensions */
 	if (!platform_gl_context)
@@ -874,7 +874,7 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	(void)version;
 	platform_event_thread = SDL_GetCurrentThreadID();
 	platform_log("OpenGL %s on %s", (const char *)glGetString(GL_VERSION), (const char *)glGetString(GL_RENDERER));
-#ifndef HALO_ILP32
+#if !defined(HALO_ANDROID) && !defined(HALO_IOS)
 	platform_mouse_capture(TRUE);
 #endif
 	return TRUE;
@@ -887,7 +887,7 @@ and borderless's resolution are taken up between frames
 (halo_screen_commit) */
 void platform_display_apply(void)
 {
-#ifndef HALO_ILP32
+#if !defined(HALO_ANDROID) && !defined(HALO_IOS)
 	BOOL fullscreen = platform_fullscreen_setting();
 	long width, height;
 
@@ -1444,7 +1444,7 @@ void platform_pump_events(void)
 				platform_mouse_capture(!input_state.mouse_released && !input_state.ui_pointer &&
 					!scoreboard_pointer_active);
 			}
-#ifndef HALO_ILP32
+#if !defined(HALO_ANDROID) && !defined(HALO_IOS)
 			/* F11 switches between fullscreen and the window (SDL keeps the
 			window's size and place while fullscreen) */
 			if (event.key.down && !event.key.repeat && event.key.scancode == SDL_SCANCODE_F11)
@@ -1454,7 +1454,7 @@ void platform_pump_events(void)
 #endif
 			break;
 		case SDL_EVENT_MOUSE_MOTION:
-#if !defined(HALO_ILP32) || defined(HALO_IOS)
+#ifndef HALO_ANDROID
 			if (scoreboard_pointer_active)
 			{
 				scoreboard_pointer.x = event.motion.x;
@@ -1492,7 +1492,7 @@ void platform_pump_events(void)
 				binding_captured_input = INPUT_MOUSE + event.button.button;
 				break;
 			}
-#if !defined(HALO_ILP32) || defined(HALO_IOS)
+#ifndef HALO_ANDROID
 			/* the open scoreboard's pointer: a right click frees it (and
 			fires nothing), and another takes it back; its clicks pick */
 			if (!input_state.ui_pointer && SDL_GetTicks() < scoreboard_open_until_ms && scoreboard_pointer_offered &&
@@ -1598,7 +1598,7 @@ void platform_pump_events(void)
 		case SDL_EVENT_WINDOW_FOCUS_GAINED:
 			input_state.focused = TRUE;
 			look_at_clipboard = TRUE;
-#ifndef HALO_ILP32
+#if !defined(HALO_ANDROID) && !defined(HALO_IOS)
 			if (!input_state.mouse_released && !input_state.ui_pointer && !scoreboard_pointer_active)
 				platform_mouse_capture(TRUE);
 #endif
@@ -1612,7 +1612,7 @@ void platform_pump_events(void)
 			break;
 #endif
 		case SDL_EVENT_GAMEPAD_ADDED:
-#ifdef HALO_ILP32
+#ifdef HALO_ARM64_GUEST
 			/* (the guest reaches SDL only through host_imports.list, which
 			has no SDL_GetGamepadName; the Apple host logs the names itself) */
 			SDL_OpenGamepad(event.gdevice.which);
@@ -1630,6 +1630,16 @@ void platform_pump_events(void)
 				}
 			}
 #endif
+			break;
+		case SDL_EVENT_GAMEPAD_REMOVED:
+			/* (SDL keeps a gamepad open until it is closed, even once the
+			controller has gone) */
+			{
+				SDL_Gamepad *gamepad = SDL_GetGamepadFromID(event.gdevice.which);
+
+				if (gamepad)
+					SDL_CloseGamepad(gamepad);
+			}
 			break;
 		default:
 			break;
@@ -1672,7 +1682,7 @@ int platform_binding_capture_poll(int *input)
 	return result;
 }
 
-#if !defined(HALO_ILP32) || defined(HALO_IOS)
+#ifndef HALO_ANDROID
 /* ---------- the menus' pointer */
 
 /* While a menu is up the mouse is released, its pointer shows (centered when
@@ -1741,7 +1751,7 @@ it types arrives as keys. Elsewhere text input stays off, as before, so that
 no input method takes the keys the field reads: a Wayland touch screen's
 keyboard (text-input-v3) would type text events, which the field does not
 read. */
-#ifndef HALO_ILP32
+#if !defined(HALO_ANDROID) && !defined(HALO_IOS)
 static SDL_AtomicInt screen_keyboard_wanted;
 /* (each field begun, which brings the keyboard up again: Steam does not say
 when its keyboard goes, by its own Enter or closed by hand, so SDL holds it

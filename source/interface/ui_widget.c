@@ -1367,6 +1367,14 @@ static boolean ui_widget_load_children_recursive(
 /* port: whether the tag is one of the menus' (port/linux/game/menu_tags.c) */
 boolean pc_menu_tag(
 	long tag_index);
+/* port: whether this machine has, or is adding, a second player: co-op,
+split screen, the lobby's (port/linux/game/menu_functions.c) */
+unsigned char pc_menu_split_players(
+	void);
+/* port: local_player_count, 0 before the players' globals are made
+(source/game/players.c) */
+short players_port_local_player_count(
+	void);
 /* port: where in its widget, and how large, the menus draw a frame of
 ui.map's that they scale (port/linux/game/menu_tags.c) */
 boolean pc_menu_frame_placement(
@@ -1375,6 +1383,11 @@ boolean pc_menu_frame_placement(
 	short *y,
 	short *width,
 	short *height);
+/* port: the placeholder bitmap the menus draw a sprite of a high-res
+texture from, or the sheet if it has none (port/linux/game/hud_hires_tags.c) */
+struct bitmap_data const *hud_hires_sprite_bitmap(
+	struct bitmap_data const *sheet,
+	short sequence_index);
 static void widget_instance_initialize(
 	struct widget_instance *widget,
 	struct widget_instance *parent,
@@ -4048,6 +4061,8 @@ static void render_state_bitmap(
 	if (bitmap && _texture_cache_bitmap_get_hardware_format(
 		(struct bitmap_data *)bitmap, FALSE, TRUE))
 	{
+		/* port: the sprite from a high-res texture, if it has one */
+		bitmap = hud_hires_sprite_bitmap(bitmap, icon->sequence_index);
 		scale = hud_globals_get_scale(local_player_count() > 1);
 		point.x = (short)(icon->offset.x * scale + cursor_bounds->x0 + 1.0f);
 		point.y = (short)(cursor_bounds->y1 - icon->offset.y * scale - 2.0f);
@@ -5672,6 +5687,10 @@ static short ui_mouse_presses[UI_MOUSE_MAXIMUM_PRESSES];
 static long ui_mouse_press_count = 0;
 static boolean ui_mouse_hover_pending = FALSE;
 static boolean ui_mouse_click_pending = FALSE;
+/* whether the pointer moved the focus last (the d-pad clears it): a list
+then doesn't scroll on at its end, which the pointer, moving, would make it
+do every frame (menu_functions.c) */
+static boolean ui_mouse_focused_last = FALSE;
 static short ui_mouse_hover_x, ui_mouse_hover_y;
 static short ui_mouse_click_x, ui_mouse_click_y;
 /* whether the latest pointer read was the touchscreen: the taller legend
@@ -6420,6 +6439,7 @@ static void ui_mouse_give_focus(
 {
 	struct widget_instance *ancestor;
 
+	ui_mouse_focused_last = TRUE;
 	if (ui_mouse_widget_has_focus(widget))
 		return;
 	widget_instance_give_focus_directly(widget_instance_get_topmost_parent(widget), widget);
@@ -6431,6 +6451,14 @@ static void ui_mouse_give_focus(
 	ui_play_audio_feedback_sound(_ui_audio_feedback_cursor);
 
 	return;
+}
+
+/* port: whether the pointer moved the menus' focus last, rather than the
+d-pad (menu_functions.c's lists) */
+boolean ui_widget_port_pointer_focused(
+	void)
+{
+	return ui_mouse_focused_last;
 }
 
 /* the d-pad buttons that step a widget back and forward */
@@ -7623,6 +7651,27 @@ static void widget_instance_tab_to_previous_valid_widget(
 	return;
 }
 
+/* port: with one person playing, any controller drives the first player's
+menus, not only the first port's: a phone can list a device of its own (its
+touch controls) before the gamepad, which then reads port 2, and a player
+picks up whichever pad is at hand. Its screens read every controller's
+events (process_ui_widgets), and take them
+(widget_takes_events_of_controller). With two or more players, each
+controller keeps to its own player's menus */
+static boolean widget_takes_any_controller(
+	struct widget_instance const *widget)
+{
+	return widget->local_player_index == 0 && !pc_menu_split_players() &&
+		(we_are_at_the_main_menu || players_port_local_player_count() <= 1);
+}
+
+/* port: the controller whose events a screen reads (NONE: every one's) */
+static short widget_event_controller(
+	struct widget_instance const *widget)
+{
+	return widget_takes_any_controller(widget) ? NONE : widget->local_player_index;
+}
+
 /* port: whether a widget of the local player (NONE: any) takes the
 controller's events. In co-op's menus (Multiplayer's CO-OP CAMPAIGN,
 port/linux/game/menu_functions.c) the screens it shares with one player's
@@ -7637,6 +7686,11 @@ static boolean widget_takes_events_of_controller(
 
 	if (widget->local_player_index == NONE || widget->local_player_index == controller_index)
 		return TRUE;
+	if (controller_index > 0 && controller_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS &&
+		widget_takes_any_controller(widget))
+	{
+		return TRUE;
+	}
 	if (widget->local_player_index != 0 || !we_are_at_the_main_menu || player_spawn_count < 2 ||
 		controller_index < 0 || controller_index >= MAXIMUM_NUMBER_OF_LOCAL_PLAYERS)
 	{
@@ -7665,6 +7719,12 @@ static void widget_instance_process_one_event_recursive(
 		"c:\\halo\\SOURCE\\interface\\ui_widget.c",
 		3067,
 		widget && definition && event && return_widget_deleted);
+	if (event->type == _event_type_button &&
+		event->data.button.index >= _widget_event_dpad_up &&
+		event->data.button.index <= _widget_event_dpad_right)
+	{
+		ui_mouse_focused_last = FALSE;
+	}
 	if (event->type == _event_type_button &&
 		event->data.button.value > 1 &&
 		event->controller_index >= 0 &&
@@ -8512,7 +8572,7 @@ void process_ui_widgets(
 			struct event_record event = {0};
 
 			if (widget_globals.processing_inhibited ||
-				!get_next_event(&event, widget->local_player_index))
+				!get_next_event(&event, widget_event_controller(widget)))
 			{
 				/* the widget still gets one empty event so that its animation,
 				auto-close timer and fade keep running */
@@ -8543,7 +8603,7 @@ void process_ui_widgets(
 					if (widget != widget_globals.active_widgets[widget_index])
 						break;
 				}
-				while (get_next_event(&event, widget->local_player_index));
+				while (get_next_event(&event, widget_event_controller(widget)));
 			}
 			widgets_processed = TRUE;
 			if (!widget_globals.active_widgets[widget_index] &&

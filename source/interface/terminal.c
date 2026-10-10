@@ -347,12 +347,7 @@ void terminal_printf(
 	...)
 {
 	real_argb_color default_terminal_printf_color;
-#ifdef HALO_WEB
-	/* WebAssembly's va_list is not a char pointer */
 	va_list arglist;
-#else
-	char *arglist;
-#endif
 
 	va_start(arglist, format);
 

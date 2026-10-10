@@ -15,7 +15,6 @@ Not in upstream OpenCE:
 - **B.Jumper** button layout (Halo 3's Bumper Jumper) in Gamepad Setup.
 - **Touchpad scoreboard:** hold a DualSense or DualShock 4 touchpad to show
   the scoreboard.
-- **Field of view** setting in Video Settings (60–110; 70 is the game's own).
 - **Render height** setting in Video Settings (iOS): draw at fewer pixels
   and upscale, after a relaunch.
 - **Frame rate** setting in Video Settings (iOS): 30 Classic, 60 or Display,

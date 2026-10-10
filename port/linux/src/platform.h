@@ -114,8 +114,8 @@ that window at start-up and hands out page-granular blocks from it, so the
 physical/virtual arithmetic the game and Direct3D rely on keeps working. */
 
 #define PLATFORM_CONTIGUOUS_BASE 0x80000000UL
-#if defined(HALO_ANDROID) || defined(HALO_ILP32)
-/* 128 MB, a development kit's: the ILP32 guests' image (Android, Apple) is
+#ifdef HALO_ARM64_GUEST
+/* 128 MB, a development kit's: the ARM64 guests' image (Android, Apple) is
 linked just above the window (port/android/include/halo_android_abi.h,
 port/runtime/include/halo_guest_abi.h) */
 #define PLATFORM_CONTIGUOUS_SIZE 0x08000000UL

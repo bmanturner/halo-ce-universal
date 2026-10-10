@@ -381,6 +381,10 @@ symbols in this file:
 #include "networking/network_server_manager.h" /* port: a co-op game's level won */
 #include "network_coop.h" /* port: port/linux/game/network_coop.c */
 #include "network_voice.h" /* port: port/linux/game/network_voice.c */
+#include "profile_sections.h" /* port: port/linux/include/profile_sections.h */
+#ifdef HALO_PROFILE
+#include "profile_trace.h" /* port: port/linux/src/profile_trace.c */
+#endif
 #include "camera/director.h"
 #include "camera/observer.h"
 #include "cutscene/cinematics.h"
@@ -393,6 +397,7 @@ symbols in this file:
 #include "text/font_group.h"
 #include "tag_files/files.h"
 #include "custom_edition_cache.h" /* port: custom_edition_level_name */
+#include "view_fov.h" /* port: display.fov, before the projection and culling */
 
 #if defined(HALO_WINDOWS) || defined(HALO_ANDROID) || defined(__linux__)
 #define HALO_NATIVE_BUILD_INFO 1
@@ -1154,35 +1159,6 @@ static void screenshot_record(
 	return;
 }
 
-/* port: display.field_of_view, the first-person view's field of view in
-degrees, from the platform layer (port/linux/src/port_config.c). The game's own
-is 70. It scales the tangent the render camera is made from, so the
-observer's field of view (which the co-op host sends) is never changed. */
-double config_real(const char *name);
-unsigned long config_changes(void);
-
-static real main_first_person_field_of_view_scale(
-	void)
-{
-	static real scale = 1.0f;
-	static unsigned long read_at = (unsigned long)-1;
-
-	/* (read again when Settings changes it) */
-	if (read_at != config_changes())
-	{
-		double degrees = config_real("display.field_of_view");
-
-		read_at = config_changes();
-		degrees = PIN(degrees, 60.0, 110.0);
-		scale = (degrees == 70.0) ?
-			1.0f :
-			(real)(tan(degrees * 0.5 * (3.14159265358979323846 / 180.0)) /
-				tan(35.0 * (3.14159265358979323846 / 180.0)));
-	}
-
-	return scale;
-}
-
 void set_window_camera_values(
 	struct render_window *window,
 	struct observer_result const *observer)
@@ -1192,15 +1168,12 @@ void set_window_camera_values(
 		window->rasterizer_camera.position = observer->position;
 		window->rasterizer_camera.forward = observer->forward;
 		window->rasterizer_camera.up = observer->up;
+		/* port: display.fov's view, the local render view only (view_fov.c) */
 		window->rasterizer_camera.vertical_field_of_view =
-			2.0f * arctangent(
+			render_fov_vertical(window->local_player_index, 2.0f * arctangent(
 				0.75f * render_camera_get_adjusted_field_of_view_tangent(
-					observer->field_of_view) *
-				((window->local_player_index != NONE &&
-					director_get_perspective(window->local_player_index) == _director_perspective_first_person &&
-					!cinematic_in_progress()) ?
-					main_first_person_field_of_view_scale() : 1.0f),
-				1.0f);
+					observer->field_of_view),
+				1.0f));
 
 		if (window->local_player_index != NONE &&
 			!console_is_active() &&
@@ -1485,6 +1458,16 @@ short main_get_window_count(
 
 	return single_window ? 1 : PIN(local_player_count(), 1, MAXIMUM_WINDOWS);
 }
+
+#ifdef HALO_PROFILE
+/* port: whether the main menu's map is the one loaded (profile_console.c: a
+recording of debug.profile_record_when = "game" waits for another) */
+boolean main_menu_is_loaded(
+	void)
+{
+	return main_globals.main_menu_scenario_loaded;
+}
+#endif
 
 static void main_new_map(
 	struct game_options *options)
@@ -2410,6 +2393,10 @@ void main_set_map_name(
 static void main_exit(
 	void)
 {
+#ifdef HALO_PROFILE
+	/* port: the profiling build's recording written out before the game goes */
+	profile_trace_shutdown();
+#endif
 	switch (main_globals.connection)
 	{
 	case _game_connection_network_server:
@@ -2743,7 +2730,6 @@ void main_rasterizer_throttle(
 	unsigned long start_milliseconds;
 	short lapsed_frames;
 	boolean did_throttle;
-	boolean precache_in_progress;
 	boolean synchronized;
 	char const *description;
 
@@ -2758,15 +2744,17 @@ void main_rasterizer_throttle(
 		if ((__int64)rasterizer_globals.frame_and_vertical_blank_index < target_index)
 		{
 			start_milliseconds = system_milliseconds();
-			precache_in_progress = cache_files_precache_in_progress();
 			did_throttle = TRUE;
 			profile_idle_start();
 			while ((__int64)rasterizer_globals.frame_and_vertical_blank_index < target_index)
 			{
-				if (precache_in_progress)
-				{
-					Sleep(1);
-				}
+				/* port: a sleep between looks, not only while a map
+				precaches: the Xbox spun here, which on a port holds a core
+				busy for most of each frame of a game held at 30 frames a
+				second (display.interpolation off). A millisecond is well
+				inside a 33 ms frame (Windows sets its timer to 1 ms:
+				win32_posix.c) */
+				Sleep(1);
 				if (system_milliseconds() > start_milliseconds + 1000)
 				{
 					console_warning(
@@ -3357,6 +3345,18 @@ static void main_game_render(
 	return;
 }
 
+/* port: the main loop's steps, timed in the profiling build */
+PROFILE_SECTION(main_input_section, "input")
+PROFILE_SECTION(main_platform_events_section, "platform_events")
+PROFILE_SECTION(main_network_start_frame_section, "network_start_frame")
+PROFILE_SECTION(main_update_time_section, "main_update_time")
+PROFILE_SECTION(main_ui_update_section, "ui_update")
+PROFILE_SECTION(main_network_end_frame_section, "network_end_frame")
+PROFILE_SECTION(main_game_time_update_section, "game_time_update")
+PROFILE_SECTION(main_non_deterministic_update_section, "non_deterministic_update")
+PROFILE_SECTION(main_throttle_section, "throttle")
+PROFILE_SECTION(main_present_section, "present")
+
 void main_loop(
 	void)
 {
@@ -3470,12 +3470,16 @@ void main_loop(
 		}
 
 		profile_frame_start();
+		profile_scope_enter(main_input_section)
 		input_frame_begin();
 		input_update();
 		input_abstraction_update();
+		profile_scope_exit(main_input_section)
+		profile_scope_enter(main_platform_events_section)
 		shell_idle();
 		event_manager_update();
 		telnet_console_process();
+		profile_scope_exit(main_platform_events_section)
 
 #if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
 		/* Production quick play owns only session setup, never player input. */
@@ -3490,6 +3494,7 @@ void main_loop(
 			network_test_update(main_globals.main_menu_scenario_loaded, main_globals.seconds_elapsed);
 			/* port: voice chat, in the lobby and in game (port/linux/game/network_voice.c) */
 			network_voice_update();
+			profile_scope_enter(main_network_start_frame_section)
 			connection = main_globals.connection;
 			if (connection==_game_connection_network_client)
 			{
@@ -3532,12 +3537,16 @@ void main_loop(
 			}
 			else if (connection==_game_connection_film_playback)
 			{
+				profile_scope_exit(main_network_start_frame_section)
 				break;
 			}
+			profile_scope_exit(main_network_start_frame_section)
 
-			main_update_time();
+			profile_scope(main_update_time_section, main_update_time();)
+			profile_scope_enter(main_ui_update_section)
 			process_ui_widgets();
 			bink_playback_update();
+			profile_scope_exit(main_ui_update_section)
 
 			/* port: not the Xbox debug keyboard's End and Escape, which stop
 			the movie and restart the map: this keyboard reaches the game only
@@ -3564,6 +3573,7 @@ void main_loop(
 					player_control_update((real)main_globals.halt_time_scale*main_globals.seconds_elapsed);
 
 					connection = main_globals.connection;
+					profile_scope_enter(main_network_end_frame_section)
 					if (connection>_game_connection_local && connection<=_game_connection_network_server && !network_game_client_end_frame())
 					{
 #if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
@@ -3574,8 +3584,10 @@ void main_loop(
 							network_game_abort();
 						}
 					}
+					profile_scope_exit(main_network_end_frame_section)
 
-					game_time_update((real)main_globals.halt_time_scale*main_globals.seconds_elapsed);
+					profile_scope(main_game_time_update_section,
+						game_time_update((real)main_globals.halt_time_scale*main_globals.seconds_elapsed);)
 
 					render_frame = main_globals.main_menu_scenario_loaded ||
 						(main_globals.halt_time_scale &&
@@ -3585,11 +3597,13 @@ void main_loop(
 						render_frame = main_globals.main_menu_scenario_loaded || main_globals.halt_time_scale;
 					render_frame &= !game_engine_running() || game_time_get()>=3;
 
+					profile_scope_enter(main_non_deterministic_update_section)
 					collision_log_continue_period(1);
 					director_update((real)main_globals.halt_time_scale*main_globals.seconds_elapsed);
 					observer_update((real)main_globals.halt_time_scale*main_globals.seconds_elapsed);
 					collision_log_end_period();
 					game_engine_update_non_deterministic((real)main_globals.halt_time_scale*main_globals.seconds_elapsed);
+					profile_scope_exit(main_non_deterministic_update_section)
 				}
 
 				if (main_globals.saving_map)
@@ -3613,11 +3627,11 @@ void main_loop(
 				profile_render_end();
 			}
 
-			main_rasterizer_throttle();
+			profile_scope(main_throttle_section, main_rasterizer_throttle();)
 
 			if (render_frame && !debug_no_drawing)
 			{
-				main_present_frame();
+				profile_scope(main_present_section, main_present_frame();)
 			}
 		}
 

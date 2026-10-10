@@ -22,7 +22,7 @@ memory_watch.c detects that by write-protecting the pages.
 #include "../game/cache_file_formats.h"
 
 #include <stdio.h>
-#ifdef HALO_ILP32
+#ifdef HALO_GLES
 #define GL_BGRA GL_RGBA
 #endif
 #include <stdlib.h>
@@ -423,7 +423,7 @@ static BOOL decode_level(const struct xgpu_texture_description *description, uns
 	return TRUE;
 }
 
-#ifdef HALO_ILP32
+#ifdef HALO_GLES
 /* ---------- DXT decoding, for ES drivers without S3TC (Mali) */
 
 static unsigned long color565(unsigned long value)
@@ -563,7 +563,7 @@ static GLenum compressed_format(unsigned char kind)
 /* debug.texture_dump_directory writes level 0 of every upload as a TGA, read back from GL */
 static void texture_dump(GLenum target, const struct xgpu_texture_description *description)
 {
-#ifdef HALO_ILP32
+#ifdef HALO_GLES
 	/* ES cannot read textures back */
 	(void)target;
 	(void)description;
@@ -706,7 +706,7 @@ static void upload(GLuint texture, GLenum target, const struct xgpu_texture_desc
 	unsigned long *converted;
 	unsigned long face, level;
 
-#ifdef HALO_ILP32
+#ifdef HALO_GLES
 	decode_compressed = description->compressed && !xgpu_capabilities.s3tc;
 #endif
 #ifdef HALO_WEB
@@ -732,9 +732,10 @@ static void upload(GLuint texture, GLenum target, const struct xgpu_texture_desc
 	{
 		GLint channels[4] = { GL_RED, GL_GREEN, GL_BLUE, GL_ALPHA };
 
-#if defined(HALO_ANDROID) && !defined(HALO_WEB)
+#if defined(HALO_GLES) && !defined(HALO_IOS)
 		/* converted texels are BGRA in memory (32-bit ARGB words); ES takes
-		RGBA */
+		RGBA. iOS is excluded: it uploads converted texels as RGBA already (the
+		HALO_IOS normalisation of decoded BGRA below) */
 		if (converted)
 		{
 			channels[0] = GL_BLUE;
@@ -780,7 +781,7 @@ static void upload(GLuint texture, GLenum target, const struct xgpu_texture_desc
 			}
 			else
 			{
-#ifdef HALO_ILP32
+#ifdef HALO_GLES
 				if (decode_compressed)
 					dxt_decode_level(information.kind, source, (unsigned long)width, (unsigned long)height,
 						(unsigned long)depth, converted);
@@ -887,8 +888,8 @@ static unsigned long palette_hash(const D3DCOLOR *palette)
 	return hash ? hash : 1;
 }
 
-/* an entry's GL texture and description: its high-res HUD texture's, if it has
-one, with the bitmap's own size (which its coordinates are in) */
+/* an entry's GL texture and description: its replacement's, if it has one,
+with the bitmap's own size (which its coordinates are in) */
 static GLuint texture_entry_result(struct texture_entry *entry, GLenum *target,
 	struct xgpu_texture_description *description)
 {
@@ -914,6 +915,17 @@ static GLuint texture_entry_result(struct texture_entry *entry, GLenum *target,
 			description->levels = levels;
 			description->hires = TRUE;
 			return art;
+		}
+	}
+	/* (a high-res texture drawn for some sprites, for the placeholder the
+	game draws them from: hud_hires.h) */
+	{
+		GLuint texture = hud_hires_placeholder_texture(entry->data, &description->levels);
+
+		if (texture)
+		{
+			description->hires = TRUE;
+			return texture;
 		}
 	}
 	if (entry->override >= 0)

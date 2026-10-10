@@ -92,11 +92,11 @@ direction3d_from_table(
 
 /* ---------- globals */
 
-#ifndef HALO_ILP32 /* Mach-O section names differ; the default is .bss anyway */
+#ifndef HALO_ARM64_GUEST /* Mach-O section names differ; the default is .bss anyway */
 #pragma bss_seg(".bss")
 #endif
 static struct random_math_globals random_math_globals;
-#if !defined(HALO_ANDROID) && !defined(HALO_IOS)
+#ifndef HALO_ARM64_GUEST
 #pragma bss_seg()
 #endif
 

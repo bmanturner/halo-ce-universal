@@ -39,11 +39,11 @@ struct crc_globals
 
 /* ---------- globals */
 
-#ifndef HALO_ILP32 /* Mach-O section names differ; the default is .bss anyway */
+#ifndef HALO_ARM64_GUEST /* Mach-O section names differ; the default is .bss anyway */
 #pragma bss_seg(".bss")
 #endif
 static struct crc_globals crc_globals;
-#if !defined(HALO_ANDROID) && !defined(HALO_IOS)
+#ifndef HALO_ARM64_GUEST
 #pragma bss_seg()
 #endif
 
