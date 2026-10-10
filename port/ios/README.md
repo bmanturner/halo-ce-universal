@@ -42,7 +42,12 @@ The script fetches pinned Khronos headers, SDL release-3.4.16 and musl 1.2.5,
 compiles the guest, embeds it into signed application text, and builds the host.
 Specify `--llvm` and `--lld` for non-default toolchain locations.
 Game assertions remain enabled. An Xcode `Release` host configuration does not
-disable the game's assertions. PGO and LTO are disabled for this initial port.
+disable the game's assertions. The guest is built with profile-guided
+optimisation from the committed Linux profile (`pgo/halo_linux.profdata`; the
+`--llvm` clang must be 22 or newer, or it builds without), and without LTO.
+Because the assembly converter makes each memory access three instructions,
+the guest asks LLVM to relax conditional branches at a quarter of their reach
+(`tools/ios_guest_build.py`); otherwise inlining can push one out of range.
 
 Outputs:
 

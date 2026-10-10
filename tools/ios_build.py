@@ -68,7 +68,7 @@ def main():
         parser.error('--jobs must be positive')
     ios_angle.prepare()
     prepare_gl_headers()
-    run(sys.executable,'configure.py','--ios','--pgo=off','--lto=off','--ios-llvm',args.llvm,'--ios-lld',args.lld)
+    run(sys.executable,'configure.py','--ios','--pgo=use','--lto=off','--ios-llvm',args.llvm,'--ios-lld',args.lld)
     run('ninja','ios_guest','-j',args.jobs)
     run(sys.executable,'tools/ios_bridges.py')
     run(sys.executable,'tools/ios_embed_guest.py','build/ios/halo_guest.elf','build/ios/embedded')

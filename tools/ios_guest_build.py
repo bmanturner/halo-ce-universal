@@ -288,7 +288,14 @@ def generate_ios_guest_build(n: Writer, sln: Any) -> None:
         f"-isystem {libc_include}", f"-isystem {arch}", f"-isystem {MUSL_DIR}/arch/generic",
         f"-isystem {MUSL_DIR}/include",
     ]
-    guest_abi = " ".join(GUEST_ABI_FLAGS + ["-DHALO_IOS=1", "-DHALO_IOS_BROWSER=1", "-DHALO_LINUX=1", "-ffixed-x15", "-ffixed-x27", "-mllvm", "-aarch64-enable-compress-jump-tables=false"] + (["-DHALO_RELEASE"] if getattr(sln, "port_release", False) else []))
+    # the converter makes each memory access and indirect branch three
+    # instructions (tools/ios_asm_convert.py), so a conditional branch LLVM
+    # placed in range can land out of it ("fixup value out of range", seen
+    # with profile-guided inlining): LLVM relaxes them at a quarter of their
+    # reach instead
+    branch_ranges = ["-mllvm", "-aarch64-tbz-offset-bits=12", "-mllvm", "-aarch64-cbz-offset-bits=17",
+                     "-mllvm", "-aarch64-bcc-offset-bits=17"]
+    guest_abi = " ".join(GUEST_ABI_FLAGS + ["-DHALO_IOS=1", "-DHALO_IOS_BROWSER=1", "-DHALO_LINUX=1", "-ffixed-x15", "-ffixed-x27", "-mllvm", "-aarch64-enable-compress-jump-tables=false"] + branch_ranges + (["-DHALO_RELEASE"] if getattr(sln, "port_release", False) else []))
     guest_code = " ".join(GUEST_CODE_FLAGS)
     tool_implicit = [Path(converter), Path("tools/guest_asm_convert.py"), *generated_headers]
     # profile-guided optimisation with the Linux build's profile (committed,
