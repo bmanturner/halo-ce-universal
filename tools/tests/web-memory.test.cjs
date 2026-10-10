@@ -66,6 +66,8 @@ test('browser resolution changes reuse color/depth textures and their framebuffe
     source.indexOf('\nstruct xgpu_render_target *xgpu_render_target_find'));
   const start = source.indexOf('/* the framebuffer of these textures, or with renderbuffers');
   const framebuffer = source.slice(start, source.indexOf('\n/* ---------- multisampling', start));
+  const kindStart = source.indexOf('enum render_target_kind\n{');
+  const kinds = source.slice(kindStart, source.indexOf('\n};', kindStart) + 3);
   const program = `
 #include <assert.h>
 #include <stdlib.h>
@@ -92,7 +94,8 @@ typedef unsigned long DWORD;
 typedef int GLint, GLsizei, BOOL;
 typedef struct { DWORD Data, Format, Size; unsigned long width, height; BOOL depth; } D3DSurface;
 struct xgpu_render_target { unsigned long data, width, height, gl_width, gl_height; BOOL depth; float scale[2]; GLuint texture; };
-struct render_target_entry { struct render_target_entry *next, *next_in_bucket; struct xgpu_render_target target; unsigned long last_rendered; BOOL screen_buffer; };
+${kinds}
+struct render_target_entry { struct render_target_entry *next, *next_in_bucket; struct xgpu_render_target target; unsigned long last_rendered; BOOL screen_buffer; enum render_target_kind kind; };
 static struct { D3DSurface depth_buffer, back_buffer; } device;
 struct framebuffer_entry { struct framebuffer_entry *next; GLuint color, depth, framebuffer; BOOL renderbuffers; };
 static struct render_target_entry *render_targets, *buckets[16];

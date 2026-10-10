@@ -6,6 +6,57 @@ This record applies to `apple/ios-upstream-merge` (from
 `3f2c14101d3ae1c7f0c0a11993a43407fadbeb46`. Updated 2026-10-09.
 Reports of gameplay on the original iOS fork are not validation of this merge.
 
+## Upstream merge — main `9da2a45f`, 2026-10-10
+
+Merged 97 upstream commits: upstream's split of `HALO_ANDROID` into
+`HALO_ARM64_GUEST` (the guest's ABI), `HALO_GLES` (the ES renderer) and
+`HALO_ANDROID` (the app); field of view and viewmodel settings
+(`view_fov.c`, the FOV AND VIEWMODELS and GRAPHICS screens); in-game
+settings in the campaign; high-res controller buttons and reticles; a
+profiling build; network version 25 (units' integrated lights); any
+controller drives the menus while one person plays; saved profiles' controls
+applied; the frame throttle sleeps; gamepad and render-target leaks; and
+many decompilation fixes. Apple-specific integration:
+
+- `HALO_ILP32` is retired. The iOS guest defines `HALO_ARM64_GUEST` and
+  `HALO_GLES` (with `HALO_IOS`); the web build `HALO_ANDROID`,
+  `HALO_ARM64_GUEST`, `HALO_GLES` and `HALO_WEB`. The fork's guards were
+  mapped so that every build compiles what it did before:
+  `HALO_ILP32 && !HALO_IOS` became `HALO_ANDROID`, `!HALO_ILP32 || HALO_IOS`
+  `!HALO_ANDROID`, and shared mobile behaviour `HALO_ANDROID || HALO_IOS`.
+  The texture upload's BGRA swizzle stays off on iOS (`HALO_GLES &&
+  !HALO_IOS`), which uploads converted texels as RGBA itself.
+- Upstream code now also built for the iOS guest: the screen fade scripts'
+  argument fix for the ARM64 guest (`hs.c`) and 1024-frame audio callbacks
+  (`dsound_sdl.c`, 512 before).
+- The fork's `display.field_of_view` is removed in favour of upstream's
+  `display.fov`, `display.viewmodel_fov` and `display.viewmodel_visible`.
+  The settings screens were written again from `tools/port_settings.py`;
+  Video Settings keeps one place per row (no per-platform packing), since the
+  menu platforms cannot pack the iOS touch layout apart from Android's.
+- `SDL_CloseGamepad`, which the platform layer now calls when a controller
+  goes: the Apple guest calls the new `host_sdl_close_gamepad` import, which
+  releases the guest's handle and SDL's reference; the web build's is a
+  no-op over its fixed table.
+- `tools/tests/web-memory.test.cjs` takes `enum render_target_kind` from
+  `d3d8_gl.c` for upstream's render-target eviction.
+
+Observed:
+
+- Unsigned IPA and simulator app built. `tools/ios_test.py`, the 132
+  `tools/tests/*.test.cjs` checks, the two `.mjs` browser suites, the web
+  workflow's nine Python harnesses and four C regressions,
+  `tools/test_touch_menu.py`, `tools/test_touch_layout.py`,
+  `tools/test_cache_file_formats.py` and `tools/test_bmp_files.py` pass.
+  `tools/test_linux_port.py`'s three Linux-toolchain checks and
+  `tools/test_profile.py`'s two (32-bit headers, LeakSanitizer) fail on macOS;
+  `tools/harness` and `tools/test_light_storage.py` need a 32-bit Linux
+  toolchain, as before the merge.
+- `ninja web` with Emscripten 6.0.10 links. `tools/ci_build.py android debug`
+  builds the APK.
+- Not verified here: sound at the new buffer size, the FOV screens and
+  controller removal on a device, Linux and Windows builds.
+
 ## Frame rate setting — 2026-10-10
 
 `display.frame_rate` (iOS): Video Settings' FRAME RATE row (30 CLASSIC, 60,

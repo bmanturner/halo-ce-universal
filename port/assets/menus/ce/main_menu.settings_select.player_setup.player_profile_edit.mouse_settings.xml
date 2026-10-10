@@ -24,7 +24,6 @@
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/mouse_settings/button_ok" x="380" y="1"/>
 		<child widget="common_button_cancel" x="510" y="1"/>
 	</widget>
-	<!-- 1-100 uses multiplier = value squared / 4000: finer low-end aiming; 20 = 0.1. -->
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/mouse_settings/op_mouse_sensitivity" width="512" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds" color="#FF2896FF">
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/mouse_settings/mouse_sensitivity_label"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/mouse_settings/mouse_sensitivity_spinner" x="320" y="1"/>

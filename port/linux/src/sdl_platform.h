@@ -60,7 +60,7 @@ struct platform_keystroke
 BOOL platform_sdl_initialize(void);
 /* creates the window and makes its OpenGL context current on this thread */
 BOOL platform_video_initialize(unsigned long width, unsigned long height);
-#ifndef HALO_ILP32
+#if !defined(HALO_ANDROID) && !defined(HALO_IOS)
 BOOL platform_screen_mode(long *width, long *height);
 #endif
 /* Video Setup's resolutions (port/linux/game/menu_tags.c), in pixels: the

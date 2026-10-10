@@ -377,7 +377,7 @@ static void keyboard_gamepad(const struct platform_input_state *input, XINPUT_GA
 		k[SDL_SCANCODE_KP_ENTER]);
 	pad->bAnalogButtons[XINPUT_GAMEPAD_B] |= analog(k[SDL_SCANCODE_ESCAPE] || k[SDL_SCANCODE_BACKSPACE] ||
 		(mouse && m[SDL_BUTTON_X1]));
-#ifdef HALO_ILP32
+#if defined(HALO_ANDROID) || defined(HALO_IOS)
 	/* the system back key (gesture or button) backs out of menus */
 	pad->bAnalogButtons[XINPUT_GAMEPAD_B] |= analog(k[SDL_SCANCODE_AC_BACK]);
 #endif
@@ -729,7 +729,7 @@ static int sdl_gamepads(SDL_Gamepad *gamepads[PORT_COUNT])
 	ids = SDL_GetGamepads(&count);
 	if (!ids)
 		return 0;
-#ifdef HALO_ILP32
+#if defined(HALO_ANDROID) || defined(HALO_IOS)
 	{
 		/* Android/iOS can list input devices with a few gamepad buttons (the
 		emulator's keyboard, some phones' key devices) as generic gamepads:

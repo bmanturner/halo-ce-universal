@@ -39,7 +39,9 @@ GUEST_ABI_FLAGS = [
     "-fno-define-target-os-macros",
     "-D__linux__=1",
     "-D__unix__=1",
-    "-DHALO_ILP32=1",
+    # The ILP32 guest's code paths and the OpenGL ES renderer's.
+    "-DHALO_ARM64_GUEST=1",
+    "-DHALO_GLES=1",
     # Baseline ARMv8 instructions; Darwin otherwise enables newer features.
     "-mcpu=cortex-a53",
     "-nostdinc",

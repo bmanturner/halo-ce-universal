@@ -6,7 +6,8 @@ ILP32 target (32-bit int, long and pointers), which the game's data formats
 need, and the Xbox memory window at 0x80000000 lies inside a 4 GB wasm
 memory, so the game code runs as it does on the other ports.
 
-The game follows the Android port's code paths (HALO_ANDROID: OpenGL ES 3,
+The game follows the Android port's code paths (HALO_ANDROID, HALO_ARM64_GUEST,
+HALO_GLES: OpenGL ES 3,
 the display's shape, the configuration file in the data folder) with
 HALO_WEB for what differs in a browser. This graph builds
 
@@ -56,7 +57,11 @@ WEB_MEMORY_BYTES = 0x88000000
 
 WEB_ABI_FLAGS = [
     "-pthread",
+    # The web build takes the ILP32 guest's code paths (wasm32 is ILP32 like
+    # the Android guest), the ES renderer's (WebGL 2) and the Android app's.
     "-DHALO_ANDROID=1",
+    "-DHALO_ARM64_GUEST=1",
+    "-DHALO_GLES=1",
     "-DHALO_WEB=1",
     "-fshort-wchar",
     # the Win32 ABI returns small structures and unions in registers, and the
@@ -274,7 +279,8 @@ def generate_web_build(n: Writer, sln: Any) -> None:
     ])
     # posix_*.c talk to the C library only, with its own ABI (as on Linux)
     posix_cflags = " ".join([
-        "-pthread", "-DHALO_ANDROID=1", "-DHALO_WEB=1", "-Xclang", "-target-abi", "-Xclang", "experimental-mv",
+        "-pthread", "-DHALO_ANDROID=1", "-DHALO_ARM64_GUEST=1", "-DHALO_GLES=1", "-DHALO_WEB=1",
+        "-Xclang", "-target-abi", "-Xclang", "experimental-mv",
         "-mmultivalue", "-mbulk-memory", "-mnontrapping-fptoint", "-msimd128", "-O2", "-g2", "-flto",
         "-std=gnu11", "-D_GNU_SOURCE", "-D_FILE_OFFSET_BITS=64", "-w", f"-I{LINUX_DIR}/src",
     ])

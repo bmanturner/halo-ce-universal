@@ -274,8 +274,8 @@ game's data formats need, and the game runs as it does on the other ports.
   local prototypes that now match their definitions (`hs.c`, `rasterizer.c`,
   `ui_widget_event_handler_functions.c` and others), the cache thread's start
   routine (`cache_files_windows.c`), the stub game engine's callbacks
-  (`game_engine_stub.c`), `weapon_preprocess_node_orientations`, a `va_list`
-  (`terminal.c`), and two globals defined in a header (`object_lists.h`;
+  (`game_engine_stub.c`), `weapon_preprocess_node_orientations`, and two
+  globals defined in a header (`object_lists.h`;
   WebAssembly has no common symbols). An unoptimised link
   (`-Wl,--lto-O0`) names any call LLVM could not adapt
   `<function>_bitcast_invalid`.

@@ -84,6 +84,24 @@ static void *handle_get(uint32_t handle, int type)
 	return object;
 }
 
+/* frees the handle and returns its object, NULL when the handle is not of that type */
+static void *handle_release(uint32_t handle, int type)
+{
+	void *object = NULL;
+
+	if (handle == 0 || handle >= HANDLE_COUNT)
+		return NULL;
+	pthread_mutex_lock(&handle_lock);
+	if (handles[handle].type == type)
+	{
+		object = handles[handle].object;
+		handles[handle].type = _handle_free;
+		handles[handle].object = NULL;
+	}
+	pthread_mutex_unlock(&handle_lock);
+	return object;
+}
+
 /* ---------- general */
 
 int host_sdl_init(uint32_t flags)
@@ -322,6 +340,16 @@ int host_sdl_rumble_gamepad(uint32_t gamepad, uint32_t low, uint32_t high, uint3
 	SDL_Gamepad *object = handle_get(gamepad, _handle_gamepad);
 
 	return object ? SDL_RumbleGamepad(object, (Uint16)low, (Uint16)high, milliseconds) : 0;
+}
+
+/* the guest's SDL_CloseGamepad, on the controller's removal event: it balances the guest's
+SDL_OpenGamepad (the host's own primary-controller open in host_touch.m is separate) */
+void host_sdl_close_gamepad(uint32_t gamepad)
+{
+	SDL_Gamepad *object = handle_release(gamepad, _handle_gamepad);
+
+	if (object)
+		SDL_CloseGamepad(object);
 }
 
 /* ---------- audio */

@@ -518,6 +518,12 @@ SDL_Gamepad *SDL_OpenGamepad(SDL_JoystickID id)
 	return SDL_GetGamepadFromID(id);
 }
 
+void SDL_CloseGamepad(SDL_Gamepad *gamepad)
+{
+	/* the gamepads are entries of a static table, nothing was opened */
+	(void)gamepad;
+}
+
 Sint16 SDL_GetGamepadAxis(SDL_Gamepad *gamepad, SDL_GamepadAxis axis)
 {
 	struct web_gamepad *pad = gamepad_slot(gamepad);
