@@ -1,3 +1,4 @@
+#import <GameController/GameController.h>
 #import <UIKit/UIKit.h>
 #include <limits.h>
 #include <stdio.h>
@@ -11,7 +12,42 @@
 #include "tvos_host.h"
 #include <SDL3/SDL.h>
 /* No on-screen controls on Apple TV; the Siri Remote and game controllers go through SDL. */
-void host_ios_touch_initialize(void) {}
+
+/* GameController applies a controller's input on the main queue and SDL reads
+   the controller's state once a frame (60 a second on a TV), so a quick tap
+   whose press and release both fall between two reads never reached the game
+   (seen with a DualSense D-pad). Every press is latched here, under the player
+   index SDL gives the controller, and reported at the next read of that
+   button. */
+#define LATCH_PLAYERS 8
+static uint32_t latched[LATCH_PLAYERS];
+static uint32_t pressed_buttons(GCExtendedGamepad *g) {
+    uint32_t b=0;
+#define PRESSED(input,button) if((input).isPressed)b|=1u<<(button)
+    PRESSED(g.buttonA,SDL_GAMEPAD_BUTTON_SOUTH);PRESSED(g.buttonB,SDL_GAMEPAD_BUTTON_EAST);
+    PRESSED(g.buttonX,SDL_GAMEPAD_BUTTON_WEST);PRESSED(g.buttonY,SDL_GAMEPAD_BUTTON_NORTH);
+    PRESSED(g.leftShoulder,SDL_GAMEPAD_BUTTON_LEFT_SHOULDER);PRESSED(g.rightShoulder,SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
+    PRESSED(g.leftThumbstickButton,SDL_GAMEPAD_BUTTON_LEFT_STICK);PRESSED(g.rightThumbstickButton,SDL_GAMEPAD_BUTTON_RIGHT_STICK);
+    PRESSED(g.buttonMenu,SDL_GAMEPAD_BUTTON_START);PRESSED(g.buttonOptions,SDL_GAMEPAD_BUTTON_BACK);
+    PRESSED(g.dpad.up,SDL_GAMEPAD_BUTTON_DPAD_UP);PRESSED(g.dpad.down,SDL_GAMEPAD_BUTTON_DPAD_DOWN);
+    PRESSED(g.dpad.left,SDL_GAMEPAD_BUTTON_DPAD_LEFT);PRESSED(g.dpad.right,SDL_GAMEPAD_BUTTON_DPAD_RIGHT);
+    if([g isKindOfClass:GCDualSenseGamepad.class])PRESSED(((GCDualSenseGamepad *)g).touchpadButton,SDL_GAMEPAD_BUTTON_TOUCHPAD);
+    else if([g isKindOfClass:GCDualShockGamepad.class])PRESSED(((GCDualShockGamepad *)g).touchpadButton,SDL_GAMEPAD_BUTTON_TOUCHPAD);
+#undef PRESSED
+    return b;
+}
+static void latch_presses(GCController *controller) {
+    controller.extendedGamepad.valueChangedHandler=^(GCExtendedGamepad *gamepad,GCControllerElement *element) {
+        (void)element;
+        NSInteger player=gamepad.controller.playerIndex;
+        if(player>=0 && player<LATCH_PLAYERS)latched[player]|=pressed_buttons(gamepad);
+    };
+}
+void host_ios_touch_initialize(void) {
+    for(GCController *controller in GCController.controllers)latch_presses(controller);
+    [NSNotificationCenter.defaultCenter addObserverForName:GCControllerDidConnectNotification object:nil queue:nil
+        usingBlock:^(NSNotification *note) {latch_presses(note.object);}];
+}
 void host_ios_touch_attach(SDL_Window *window) {
     UIWindow *native=(__bridge UIWindow *)SDL_GetPointerProperty(SDL_GetWindowProperties(window),SDL_PROP_WINDOW_UIKIT_WINDOW_POINTER,NULL);
     /* Retire SDL's temporary launch window before entering the non-returning game loop. */
@@ -28,7 +64,18 @@ void host_ios_touch_focus(void) {}
 int host_ios_gamepads(uint32_t *out,int capacity){int count=0;SDL_JoystickID *ids=SDL_GetGamepads(&count);int n=MIN(count,capacity);for(int i=0;i<n;i++)out[i]=ids[i];SDL_free(ids);return n;}
 int host_ios_gamepad_type(SDL_Gamepad *pad){return SDL_GetGamepadType(pad);}
 int host_ios_gamepad_axis(SDL_Gamepad *pad,int axis){return SDL_GetGamepadAxis(pad,(SDL_GamepadAxis)axis);}
-int host_ios_gamepad_button(SDL_Gamepad *pad,int button){return SDL_GetGamepadButton(pad,(SDL_GamepadButton)button);}
+int host_ios_gamepad_button(SDL_Gamepad *pad,int button){
+    int down=SDL_GetGamepadButton(pad,(SDL_GamepadButton)button),player=SDL_GetGamepadPlayerIndex(pad);
+    if(player>=0 && player<LATCH_PLAYERS && button>=0 && button<32) {
+        uint32_t bit=1u<<button;
+        if(!down && (latched[player]&bit)) {
+            down=1;
+            host_logf(HOST_LOG_INFO,"controller: a tap between two reads of button %d, passed on",button);
+        }
+        latched[player]&=~bit;
+    }
+    return down;
+}
 
 /* Browser rooms need WebKit, which tvOS lacks. */
 void host_ios_room_prepare(void) {}

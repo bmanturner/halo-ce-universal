@@ -11,6 +11,8 @@ void *halo_graphics_create(struct SDL_Window *window);
 int halo_graphics_make_current(void);
 int halo_graphics_swap(void);
 int halo_graphics_swap_interval(int interval);
+/* Apple's OpenGL ES: SDL_GL_SwapWindow with the window's own renderbuffer bound. */
+int halo_graphics_gl_swap(struct SDL_Window *window);
 /* Frame rate cap (0 = none); halo_graphics_pace_frame waits for the next frame
    slot and belongs on the render thread right after the present. */
 void host_ios_set_frame_rate(unsigned int frames_per_second);

@@ -196,6 +196,21 @@ void *halo_graphics_create(SDL_Window *window) {
 int halo_graphics_make_current(void) {return eglMakeCurrent(display,windowSurface,windowSurface,context);}
 int halo_graphics_swap(void) {return eglSwapBuffers(display,windowSurface);}
 int halo_graphics_swap_interval(int interval) {return eglSwapInterval(display,interval);}
+/* Apple's OpenGL ES through SDL's view. SDL presents the renderbuffer bound at
+   the swap ("viewRenderbuffer should always be bound here",
+   SDL_uikitopenglview.m); the game's multisampled targets bind their own, which
+   left the screen black with MSAA, so the view's is bound first. */
+int halo_graphics_gl_swap(SDL_Window *window) {
+#if HALO_MACOS
+    return SDL_GL_SwapWindow(window);
+#else
+    static void (*bindRenderbuffer)(GLenum,GLuint);
+    if(!bindRenderbuffer)bindRenderbuffer=halo_graphics_proc("glBindRenderbuffer");
+    bindRenderbuffer(GL_RENDERBUFFER,(GLuint)SDL_GetNumberProperty(SDL_GetWindowProperties(window),
+        SDL_PROP_WINDOW_UIKIT_OPENGL_RENDERBUFFER_NUMBER,0));
+    return SDL_GL_SwapWindow(window);
+#endif
+}
 
 int halo_graphics_shared_event_supported(void) {return sharedEventSupported;}
 unsigned int halo_graphics_shared_create(unsigned int slot,void *surface,unsigned int w,unsigned int h) {
