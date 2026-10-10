@@ -164,9 +164,10 @@ static void exportReport(UIViewController *presenter) {
         [choice addTarget:self action:@selector(rendererChanged:) forControlEvents:UIControlEventValueChanged];cell.accessoryView=choice;
     } else if(selectedMetal && path.row==1) {
         UISwitch *toggle=[UISwitch new];toggle.tag=0;
-        toggle.enabled=halo_graphics_metal() && halo_metalfx_supported();toggle.on=halo_metalfx_enabled();
+        BOOL wanted=[NSUserDefaults.standardUserDefaults boolForKey:@"HaloMetalFX"];
+        toggle.enabled=halo_graphics_metal() && halo_metalfx_supported();toggle.on=wanted;
         cell.textLabel.text=@"MetalFX spatial upscaling";
-        cell.detailTextLabel.text=toggle.enabled?@"Render at up to 720p, then upscale with MetalFX.":(!halo_graphics_metal()?@"Select Metal and relaunch to enable.":@"Unavailable on this device.");
+        cell.detailTextLabel.text=toggle.enabled?(wanted!=(halo_metalfx_enabled()!=0)?@"Relaunch the app to apply this change.":@"Render at 720p (or the Render height setting), then upscale with MetalFX. Changes apply after relaunch."):(!halo_graphics_metal()?@"Select Metal and relaunch to enable.":@"Unavailable on this device.");
         [toggle addTarget:self action:@selector(changed:) forControlEvents:UIControlEventValueChanged];cell.accessoryView=toggle;
     } else {
         NSInteger action=path.row-(selectedMetal?2:1);
@@ -184,8 +185,9 @@ static void exportReport(UIViewController *presenter) {
     halo_graphics_set_preference(sender.selectedSegmentIndex==1);[self.tableView reloadData];
 }
 - (void)changed:(UISwitch *)sender {
-    if(!sender.tag)halo_metalfx_set_enabled(sender.on);else {atomic_store(&recording,sender.on);[drawnPrograms removeAllObjects];}
+    if(sender.tag){atomic_store(&recording,sender.on);[drawnPrograms removeAllObjects];}
     [NSUserDefaults.standardUserDefaults setBool:sender.on forKey:sender.tag?@"HaloRecordShaderStalls":@"HaloMetalFX"];
+    if(!sender.tag)[self.tableView reloadData];
 }
 - (void)tableView:(UITableView *)table didSelectRowAtIndexPath:(NSIndexPath *)path {
     [table deselectRowAtIndexPath:path animated:YES];
@@ -247,7 +249,8 @@ void halo_debug_present(void) {
     return self;
 }
 -(void)refresh {
-    self.upscaleButton.enabled=halo_metalfx_supported();self.upscaleButton.state=halo_metalfx_enabled();
+    self.upscaleButton.enabled=halo_metalfx_supported();self.upscaleButton.state=[NSUserDefaults.standardUserDefaults boolForKey:@"HaloMetalFX"]?NSControlStateValueOn:NSControlStateValueOff;
+    self.upscaleButton.toolTip=@"Applies after relaunch.";
     self.recordButton.state=atomic_load(&recording);
     self.eventCount.stringValue=[NSString stringWithFormat:@"%lu events; %lu dropped",(unsigned long)events.count,(unsigned long)dropped];
 }
@@ -263,7 +266,7 @@ void halo_debug_present(void) {
 }
 -(void)windowWillClose:(NSNotification *)notification {(void)notification;debugPresented=NO;}
 -(void)network:(NSButton *)item {[NSUserDefaults.standardUserDefaults setBool:item.state==NSControlStateValueOn forKey:@"HaloBrowserRooms"];}
--(void)upscale:(NSButton *)item {BOOL on=item.state==NSControlStateValueOn;halo_metalfx_set_enabled(on);[NSUserDefaults.standardUserDefaults setBool:on forKey:@"HaloMetalFX"];[self refresh];}
+-(void)upscale:(NSButton *)item {[NSUserDefaults.standardUserDefaults setBool:item.state==NSControlStateValueOn forKey:@"HaloMetalFX"];[self refresh];}
 -(void)record:(NSButton *)item {BOOL on=item.state==NSControlStateValueOn;atomic_store(&recording,on);[drawnPrograms removeAllObjects];[NSUserDefaults.standardUserDefaults setBool:on forKey:@"HaloRecordShaderStalls"];[self refresh];}
 -(void)share:(id)sender {(void)sender;exportReport(nil);}
 -(void)clear:(id)sender {(void)sender;[events removeAllObjects];[drawnPrograms removeAllObjects];dropped=0;[self refresh];}

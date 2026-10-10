@@ -431,13 +431,23 @@ menu (⌘,). Both retain the graphics options below; the Mac build uses Metal.
   uses Apple's OpenGL ES driver. Relaunch the app after changing renderers.
   Shader/texture/command translation still starts from the shared GLES API;
   this is not a separate handwritten Metal engine.
-- **MetalFX spatial upscaling** is shown only when Metal is selected. It renders at up to 720 lines and upscales to the
-  display resolution. It is opt-in, requires a supported physical device, and
-  is unavailable in Apple's simulator SDK. ANGLE translates GLES calls and shaders to Metal. A shared
-  IOSurface carries its image to MetalFX. Explicit synchronization adds cost,
-  so enabling it is not a guarantee of higher frame rates. It is spatial, not
-  temporal upscaling. Allocation or command-buffer failure disables upscaling and returns to
-  normal Metal presentation. OpenGL mode never enables MetalFX.
+- **MetalFX spatial upscaling** is shown only when Metal is selected. It is
+  opt-in, requires a supported physical device, and is unavailable in Apple's
+  simulator SDK. The switch stores the preference and applies after you relaunch
+  the app; the running app keeps the state it launched with, because the game
+  sizes its render targets once at startup. When on, the game renders at 720
+  lines, or at `display.render_height` when that is set below the display's own
+  height, and MetalFX upscales that to the display resolution. It is spatial,
+  not temporal, upscaling. ANGLE copies each frame into one of two shared
+  IOSurface textures and signals a Metal shared event on the GPU
+  (`EGL_ANGLE_metal_shared_event_sync`); the MetalFX command buffer waits for it
+  on the GPU, writes straight into the layer's drawable and presents it, so the
+  CPU does not wait for each frame (at most two are in flight). The runtime log
+  reports the input and output sizes and which hand-off is used; without the
+  extension the hand-off falls back to `glFinish`. With MetalFX on, it presents
+  once per frame and ANGLE's own swap is skipped. Allocation or command-buffer
+  failure stops MetalFX and returns to normal Metal presentation. Enabling it is
+  not a guarantee of higher frame rates. OpenGL mode never enables MetalFX.
 - **Record shader stalls** records compile/link completion times and each
   program's first draw after recording starts, keeping events ≥ 2 ms and
   compile/link failures. First-use measurements drain earlier GPU work and

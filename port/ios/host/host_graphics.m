@@ -26,15 +26,16 @@ static void *eglLibrary,*glesLibrary;
 static EGLDisplay display;
 static EGLConfig config;
 static EGLContext context;
-static EGLSurface windowSurface,sharedSurface;
-static GLuint sharedTexture;
-static BOOL sharedBound;
+static EGLSurface windowSurface,sharedSurface[HALO_GRAPHICS_SHARED_SLOTS];
+static GLuint sharedTexture[HALO_GRAPHICS_SHARED_SLOTS];
+static BOOL sharedBound[HALO_GRAPHICS_SHARED_SLOTS],sharedEventSupported;
 static SDL_MetalView metalView;
 static PFNEGLGETPROCADDRESSPROC eglGetProcAddress;static PFNEGLINITIALIZEPROC eglInitialize;static PFNEGLCHOOSECONFIGPROC eglChooseConfig;
 static PFNEGLCREATECONTEXTPROC eglCreateContext;static PFNEGLCREATEWINDOWSURFACEPROC eglCreateWindowSurface;static PFNEGLMAKECURRENTPROC eglMakeCurrent;
 static PFNEGLSWAPBUFFERSPROC eglSwapBuffers;static PFNEGLSWAPINTERVALPROC eglSwapInterval;static PFNEGLGETERRORPROC eglGetError;
 static PFNEGLCREATEPBUFFERFROMCLIENTBUFFERPROC eglCreatePbufferFromClientBuffer;static PFNEGLBINDTEXIMAGEPROC eglBindTexImage;
 static PFNEGLRELEASETEXIMAGEPROC eglReleaseTexImage;static PFNEGLDESTROYSURFACEPROC eglDestroySurface;
+static PFNEGLCREATESYNCPROC eglCreateSync;static PFNEGLDESTROYSYNCPROC eglDestroySync;static PFNEGLQUERYSTRINGPROC eglQueryString;
 
 int halo_graphics_prefer_metal(void) {
     NSString *value=[NSUserDefaults.standardUserDefaults stringForKey:@"HaloRenderer"];
@@ -78,11 +79,15 @@ void *halo_graphics_create(SDL_Window *window) {
     LOAD(eglCreateWindowSurface);LOAD(eglMakeCurrent);LOAD(eglSwapBuffers);LOAD(eglSwapInterval);LOAD(eglGetError);
     LOAD(eglCreatePbufferFromClientBuffer);LOAD(eglBindTexImage);LOAD(eglReleaseTexImage);LOAD(eglDestroySurface);
 #undef LOAD
+    eglCreateSync=dlsym(eglLibrary,"eglCreateSync");eglDestroySync=dlsym(eglLibrary,"eglDestroySync");eglQueryString=dlsym(eglLibrary,"eglQueryString");
     PFNEGLGETPLATFORMDISPLAYEXTPROC getDisplay=(void *)eglGetProcAddress("eglGetPlatformDisplayEXT");
     EGLint attributes[]={EGL_PLATFORM_ANGLE_TYPE_ANGLE,EGL_PLATFORM_ANGLE_TYPE_METAL_ANGLE,EGL_NONE};
     display=getDisplay?getDisplay(EGL_PLATFORM_ANGLE_ANGLE,EGL_DEFAULT_DISPLAY,attributes):EGL_NO_DISPLAY;
     if(!display || !eglInitialize(display,NULL,NULL))host_fatal("Could not initialize ANGLE Metal: EGL %x",eglGetError());
     halo_shader_cache_install(display,eglGetProcAddress);
+    const char *displayExtensions=eglQueryString?eglQueryString(display,EGL_EXTENSIONS):NULL;
+    sharedEventSupported=eglCreateSync && eglDestroySync && displayExtensions && strstr(displayExtensions,"EGL_ANGLE_metal_shared_event_sync")!=NULL;
+    host_logf(HOST_LOG_INFO,"EGL_ANGLE_metal_shared_event_sync: %s",sharedEventSupported?"available":"unavailable");
     EGLint configAttributes[]={EGL_SURFACE_TYPE,EGL_WINDOW_BIT|EGL_PBUFFER_BIT,EGL_RENDERABLE_TYPE,EGL_OPENGL_ES3_BIT,EGL_RED_SIZE,8,EGL_GREEN_SIZE,8,EGL_BLUE_SIZE,8,EGL_ALPHA_SIZE,8,EGL_DEPTH_SIZE,0,EGL_STENCIL_SIZE,0,EGL_NONE};
     EGLint count=0;
     if(!eglChooseConfig(display,configAttributes,&config,1,&count) || !count)host_fatal("ANGLE Metal has no ES3 configuration");
@@ -101,32 +106,57 @@ int halo_graphics_make_current(void) {return eglMakeCurrent(display,windowSurfac
 int halo_graphics_swap(void) {return eglSwapBuffers(display,windowSurface);}
 int halo_graphics_swap_interval(int interval) {return eglSwapInterval(display,interval);}
 
-unsigned int halo_graphics_shared_create(void *surface,unsigned int w,unsigned int h) {
-    halo_graphics_shared_destroy();
+int halo_graphics_shared_event_supported(void) {return sharedEventSupported;}
+unsigned int halo_graphics_shared_create(unsigned int slot,void *surface,unsigned int w,unsigned int h) {
+    if(slot>=HALO_GRAPHICS_SHARED_SLOTS)return 0;
+    halo_graphics_shared_destroy_slot(slot);
     EGLint attrs[]={EGL_WIDTH,(EGLint)w,EGL_HEIGHT,(EGLint)h,EGL_IOSURFACE_PLANE_ANGLE,0,EGL_TEXTURE_TARGET,EGL_TEXTURE_2D,EGL_TEXTURE_FORMAT,EGL_TEXTURE_RGBA,EGL_TEXTURE_TYPE_ANGLE,GL_UNSIGNED_BYTE,EGL_TEXTURE_INTERNAL_FORMAT_ANGLE,GL_BGRA_EXT,EGL_NONE};
-    sharedSurface=eglCreatePbufferFromClientBuffer(display,EGL_IOSURFACE_ANGLE,surface,config,attrs);
-    if(!sharedSurface)return 0;
-    void (*genTextures)(GLsizei,GLuint *)=halo_graphics_proc("glGenTextures");genTextures(1,&sharedTexture);
-    return halo_graphics_shared_begin()?sharedTexture:0;
+    sharedSurface[slot]=eglCreatePbufferFromClientBuffer(display,EGL_IOSURFACE_ANGLE,surface,config,attrs);
+    if(!sharedSurface[slot])return 0;
+    void (*genTextures)(GLsizei,GLuint *)=halo_graphics_proc("glGenTextures");genTextures(1,&sharedTexture[slot]);
+    return halo_graphics_shared_begin(slot)?sharedTexture[slot]:0;
 }
-int halo_graphics_shared_begin(void) {
-    if(sharedBound)return 1;
-    if(!sharedSurface)return 0;
-    void (*bindTexture)(GLenum,GLuint)=halo_graphics_proc("glBindTexture");bindTexture(GL_TEXTURE_2D,sharedTexture);
-    sharedBound=eglBindTexImage(display,sharedSurface,EGL_BACK_BUFFER);return sharedBound;
+int halo_graphics_shared_begin(unsigned int slot) {
+    if(slot>=HALO_GRAPHICS_SHARED_SLOTS)return 0;
+    if(sharedBound[slot])return 1;
+    if(!sharedSurface[slot])return 0;
+    void (*bindTexture)(GLenum,GLuint)=halo_graphics_proc("glBindTexture");bindTexture(GL_TEXTURE_2D,sharedTexture[slot]);
+    sharedBound[slot]=eglBindTexImage(display,sharedSurface[slot],EGL_BACK_BUFFER);return sharedBound[slot];
 }
-int halo_graphics_shared_end(void) {
-    if(!sharedBound)return 1;
-    EGLBoolean released=eglReleaseTexImage(display,sharedSurface,EGL_BACK_BUFFER);
-    /* Complete both the rendering and any release-time work before another
-       Metal command queue reads the IOSurface. */
-    void (*finish)(void)=halo_graphics_proc("glFinish");finish();
-    if(released)sharedBound=NO;
-    return released;
+int halo_graphics_shared_end(unsigned int slot,void *event,uint64_t value) {
+    if(slot>=HALO_GRAPHICS_SHARED_SLOTS)return 0;
+    if(!sharedBound[slot])return HALO_GRAPHICS_SHARED_COMPLETE;
+    EGLBoolean released=eglReleaseTexImage(display,sharedSurface[slot],EGL_BACK_BUFFER);
+    int result=HALO_GRAPHICS_SHARED_COMPLETE;
+    if(released && event && sharedEventSupported) {
+        /* ANGLE encodes a signal of the caller's MTLSharedEvent after every
+           command issued so far (the blit and the release); the flush submits
+           it. The consumer's command buffer waits for the value on the GPU. */
+        EGLAttrib attributes[]={EGL_SYNC_METAL_SHARED_EVENT_OBJECT_ANGLE,(EGLAttrib)event,
+            EGL_SYNC_METAL_SHARED_EVENT_SIGNAL_VALUE_LO_ANGLE,(EGLAttrib)(value&0xffffffffu),
+            EGL_SYNC_METAL_SHARED_EVENT_SIGNAL_VALUE_HI_ANGLE,(EGLAttrib)(value>>32),EGL_NONE};
+        EGLSync sync=eglCreateSync(display,EGL_SYNC_METAL_SHARED_EVENT_ANGLE,attributes);
+        if(sync) {
+            void (*flush)(void)=halo_graphics_proc("glFlush");flush();
+            eglDestroySync(display,sync);
+            result=HALO_GRAPHICS_SHARED_SIGNALED;
+        } else host_logf(HOST_LOG_WARN,"MetalFX: shared event sync failed (EGL %x); completing with glFinish",eglGetError());
+    }
+    if(result==HALO_GRAPHICS_SHARED_COMPLETE) {
+        /* Complete both the rendering and any release-time work before another
+           Metal command queue reads the IOSurface. */
+        void (*finish)(void)=halo_graphics_proc("glFinish");finish();
+    }
+    if(released)sharedBound[slot]=NO;
+    return released?result:0;
+}
+void halo_graphics_shared_destroy_slot(unsigned int slot) {
+    if(slot>=HALO_GRAPHICS_SHARED_SLOTS)return;
+    halo_graphics_shared_end(slot,NULL,0);
+    if(sharedTexture[slot]){void (*deleteTextures)(GLsizei,const GLuint *)=halo_graphics_proc("glDeleteTextures");deleteTextures(1,&sharedTexture[slot]);sharedTexture[slot]=0;}
+    if(sharedSurface[slot]){eglDestroySurface(display,sharedSurface[slot]);sharedSurface[slot]=EGL_NO_SURFACE;}
+    sharedBound[slot]=NO;
 }
 void halo_graphics_shared_destroy(void) {
-    halo_graphics_shared_end();
-    if(sharedTexture){void (*deleteTextures)(GLsizei,const GLuint *)=halo_graphics_proc("glDeleteTextures");deleteTextures(1,&sharedTexture);sharedTexture=0;}
-    if(sharedSurface){eglDestroySurface(display,sharedSurface);sharedSurface=EGL_NO_SURFACE;}
-    sharedBound=NO;
+    for(unsigned int slot=0;slot<HALO_GRAPHICS_SHARED_SLOTS;slot++)halo_graphics_shared_destroy_slot(slot);
 }

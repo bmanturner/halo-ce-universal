@@ -208,9 +208,17 @@ static void screen_mode_choose(long *width, float scale[2])
 		drawable_width = pixels_x ? atoi(pixels_x) : (int)*width;
 		drawable_height = pixels_y ? atoi(pixels_y) : SCREEN_HEIGHT;
 	}
-	pixels = halo_display_render_size(drawable_width, drawable_height, *width,
-		requested_width, host_ios_render_height() ? (long)host_ios_render_height() :
-		config_integer("display.render_height"), screen_maximum_texture_size);
+	/* MetalFX upscales a smaller picture: the host's default input height
+	   (host_ios_render_height, 0 when it is off), unless display.render_height
+	   asks for a height below the display's own. */
+	{
+		long render_height = config_integer("display.render_height");
+
+		if (host_ios_render_height() && !(render_height > 0 && render_height < drawable_height))
+			render_height = (long)host_ios_render_height();
+		pixels = halo_display_render_size(drawable_width, drawable_height, *width,
+			requested_width, render_height, screen_maximum_texture_size);
+	}
 	scale[0] = (float)pixels.width / (float)*width;
 	scale[1] = (float)pixels.height / (float)SCREEN_HEIGHT;
 #else
@@ -5106,6 +5114,8 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 		x = (window_width - width) / 2;
 		y = (window_height - height) / 2;
 #ifdef HALO_IOS
+		/* with MetalFX the host presents its own drawable, once per frame and
+		   paced by it; the ANGLE frame is neither drawn nor swapped */
 		if (!host_ios_metalfx_present(back_buffer->target.texture,
 			back_buffer->target.gl_width, back_buffer->target.gl_height, width, height))
 #endif
@@ -5119,8 +5129,8 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 			/* row 0 of the render target is the top of the picture */
 			glBlitFramebuffer(0, 0, (GLint)back_buffer->target.gl_width, (GLint)back_buffer->target.gl_height,
 				x, y + height, x + width, y, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+			platform_video_swap();
 		}
-		platform_video_swap();
 		xgpu_gl_state_invalidate();
 		memory_watch_begin_frame();
 		xgpu_texture_cache_begin_frame();
