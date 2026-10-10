@@ -6,6 +6,73 @@ This record applies to `apple/ios-upstream-merge` (from
 `3f2c14101d3ae1c7f0c0a11993a43407fadbeb46`. Updated 2026-10-09.
 Reports of gameplay on the original iOS fork are not validation of this merge.
 
+## Client-side additions — 2026-10-09
+
+Device: iPad Pro 11" (4th gen, M2, 2388x1668 at 120 Hz), DualSense, ANGLE
+Metal (OpenGL ES 3.0, ANGLE 2.1.28252). Timings come from a throwaway probe
+(not committed) in the host's swap: frames per second, the render thread's CPU
+time per frame, GPU time per frame from `GL_EXT_disjoint_timer_query`, and
+memory-watch write faults. Scene: `debug.network_test = "host:bloodgulch"`
+with `debug.test_input = "look:1"`, medians of 34 one-second samples after the
+game starts. All runs held 120 fps (vsync), so CPU and GPU time are the
+comparison.
+
+| Build and settings | CPU ms/frame | GPU ms/frame |
+| --- | --- | --- |
+| Before, MSAA 4x, shadows 1024, per-pixel lighting | 3.17 | 4.51 |
+| Before, anti-aliasing off | 3.17 | 2.89 |
+| Before, `display.render_height = 1080` (MSAA 4x) | 3.24 | 2.37 |
+| Before, PGO only, MSAA 4x | 3.17 | 4.49 |
+| After, MSAA 4x | 3.13 | 4.53 |
+| After, anti-aliasing off | 3.00 | 2.95 |
+| After, `display.render_height = 1080` (MSAA 4x) | 3.31 | 1.99 |
+
+Write faults stayed at 0 per second in steady play on both builds.
+
+- **Vertex and index mirror** (`d3d8_gl.c`): ANGLE exposes
+  `GL_EXT_draw_elements_base_vertex` on its ES 3.0 context, so the iOS guest
+  now uses the mirror that was limited to ES 3.2; the iOS bridge calls the EXT
+  entry point. The log line ends with `base vertex 1`. About 5% less CPU per
+  frame with anti-aliasing off; within noise with MSAA.
+- **PGO**: the committed Linux profile builds into the guest, after the
+  converter's branch-range fix (it failed with "fixup value out of range" in
+  `cache_file_formats.o` without it). No measurable change in this scene.
+- **Cheaper MSAA: not achieved.** A `GL_EXT_multisampled_render_to_texture`
+  path cut MSAA's GPU cost from 1.6 to 0.8 ms, but ANGLE accepts that colour
+  attachment only with an implicit-resolve depth renderbuffer, whose samples it
+  discards at every render-pass break. Halo's environment and model shaders are
+  multi-pass and test depth EQUAL against the first pass, so while textures
+  still uploaded mid-frame after a map load, the BSP and objects drew flat and
+  washed out for several seconds (seen on the device; fine with anti-aliasing
+  off, fine on the old build). The path was removed. Invalidating the
+  multisample depth before the present-time resolve gave no measurable gain
+  (4.53 against 4.51 ms) and was removed too. MSAA keeps the renderbuffer path.
+- **MetalFX**: `MetalFX configured: input 1546x1080, output 2388x1668, GPU
+  hand-off shared event` with `display.render_height = 1080`, and input
+  1031x720 with it at 0; the scaler writes the drawable directly; about 118 fps
+  from the guest's frame counter. The display capture
+  (`xcrun devicectl device capture screenshot`) showed a correct upscaled
+  picture. The probe does not time MetalFX frames (ANGLE's swap is skipped).
+- **Render height**: the Video Settings row (iOS only) and
+  `display.render_height = 1080` give `iOS render target: 1546x1080`.
+- **Field of view**: frames at 70, 90 and 110 show the wider views; at 110
+  the first-person weapon is smaller and part of an arm shows at the bottom
+  edge, as the weapon is drawn with the same camera.
+- **Custom Edition**: the "cannot reserve the Custom Edition tag cache" line is
+  gone; with Halo PC's `bitmaps.map`, `sounds.map` and `loc.map` in
+  `Documents/CustomEdition/maps`, `deathisland` (in the game's `custom_maps`,
+  for the network test's path) hosted and played ("Halo Custom Edition: using
+  the install at .../Documents/CustomEdition").
+- **Touchpad scoreboard**: holding the DualSense touchpad showed the
+  scoreboard in a game; a touchpad click in the pause menu did nothing.
+- **Multiplayer**: the final build joined a public server through the server
+  browser, with correct textures at load and the touchpad scoreboard working.
+
+Gates: `tools/ios_test.py` passes (the memory probe covers the Custom Edition
+range), `node --test tools/tests/*.test.cjs` passes (132), and
+`tools/test_linux_port.py`'s menu tests pass; its three Linux-toolchain tests
+fail on macOS before and after. The device, Simulator and macOS apps build.
+
 ## Background resume and internet joins — 2026-10-09
 
 Symptom: on the iPad, server browser joins failed with "could not reach"
