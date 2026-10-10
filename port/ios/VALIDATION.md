@@ -6,6 +6,42 @@ This record applies to `apple/ios-upstream-merge` (from
 `3f2c14101d3ae1c7f0c0a11993a43407fadbeb46`. Updated 2026-10-09.
 Reports of gameplay on the original iOS fork are not validation of this merge.
 
+## Upstream merge — main `6a74eab5`, 2026-10-09
+
+Merged 27 upstream commits: Android touch menus (`touch_input.c`,
+`touch_menu.c`, `ui_widget.c`'s tap targets, `debug.touch_targets`), Android's
+on-screen game controls (Java overlay, `host_touch.c`, `touch_game.c`, touch
+aiming in `player_control.c`/`input_abstraction.c`), and libtiff left out of
+every build. Apple-specific integration:
+
+- iOS keeps its own touch overlay (`host_touch.m`) and the mouse pointer path
+  behind `HALO_DESKTOP_INPUT`: upstream's touch pointer is the `#else` of the
+  fork's `!HALO_ILP32 || HALO_IOS` block in `sdl_platform.c`, so only Android
+  and the web build take it. Finger events reach `touch_input.c` only under
+  `HALO_ANDROID`, so the unguarded tap-to-skip in `XInputGetState` never fires
+  on iOS. The iOS guest needs no new imports (no new SDL calls; the
+  `host_touch_*` calls are Android-only).
+- `input.touch_controls` and `input.touch_aim_assist` use the fork's
+  `_platform_mobile` (upstream's `_platform_android`) inside `#ifdef
+  HALO_ANDROID`, so iOS's `config.toml` does not list them. The fork's 1–100
+  mouse sensitivity (default 0.1) is kept.
+- Web (`HALO_ANDROID`): `port/web/src/web_stubs.c` gives the Android host's
+  six touch services as idle; the page's own controls (`site/input.js`) stay
+  a virtual controller. Without them `wasm-ld` reports `host_touch_*`
+  undefined (reproduced).
+
+Observed:
+
+- Unsigned IPA and simulator app built (the guest compiles upstream's touch
+  units and `tiff_file.c`, without libtiff). `tools/ios_test.py`, the 132
+  `tools/tests/*.test.cjs` checks, `tools/test_touch_menu.py` and
+  `tools/test_touch_layout.py` pass. `tools/test_linux_port.py`: 8 pass; the
+  three Linux-toolchain checks fail on macOS as before.
+- `ninja web` with Emscripten 6.0.10 links. `tools/ci_build.py android debug`
+  builds the APK.
+- Not verified: the app on a device after this merge, Android touch controls
+  on a device, the page in a browser, Linux and Windows builds.
+
 ## Client-side additions — 2026-10-09
 
 Device: iPad Pro 11" (4th gen, M2, 2388x1668 at 120 Hz), DualSense, ANGLE

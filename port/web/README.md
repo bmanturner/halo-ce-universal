@@ -278,8 +278,7 @@ game's data formats need, and the game runs as it does on the other ports.
   (`terminal.c`), and two globals defined in a header (`object_lists.h`;
   WebAssembly has no common symbols). An unoptimised link
   (`-Wl,--lto-O0`) names any call LLVM could not adapt
-  `<function>_bitcast_invalid`; only libtiff's remain, which the game does not
-  use.
+  `<function>_bitcast_invalid`.
 
 ### Threads and the page
 
