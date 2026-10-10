@@ -9,7 +9,7 @@ Apple port.
 
 Up to date with OpenCE's `main` at
 [`9da2a45f`](https://github.com/OpenCommunityEdition/OpenCE/commit/9da2a45ffa364b720ae9faab6a1dee876926fe42)
-(2026-10-10).
+(2026-10-10), OpenCE's build 177.
 
 ## This fork
 
@@ -33,6 +33,13 @@ Not in upstream OpenCE:
 - **Profile-guided optimisation** for the iOS build.
 
 None of these change what goes over the network, so public servers still work.
+
+## Download
+
+[Releases](https://github.com/bmanturner/halo-ce-universal/releases) has an
+unsigned IPA for iPhone and iPad (iOS 16 or later). Sign it with your own
+Apple account before installing: AltStore, SideStore or Sideloadly, or
+[port/ios/RESIGNING.md](port/ios/RESIGNING.md) with Xcode's tools.
 
 ## Build and install
 

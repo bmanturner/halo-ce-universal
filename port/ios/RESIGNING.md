@@ -1,9 +1,9 @@
 # Install the unsigned IPA with your own Apple account
 
-Use a Mac with Xcode and Python 3. Download the `halo-ce-ios-unsigned`
-artifact from this fork's successful iOS GitHub Actions run and unzip the
-artifact to obtain `Halo-CE-iOS-unsigned.ipa`. GitHub requires sign-in to
-download Actions artifacts. The simulator ZIP cannot run on an iPhone.
+Use a Mac with Xcode and Python 3. Download `Halo-CE-iOS-unsigned.ipa` from
+this fork's [Releases](https://github.com/bmanturner/halo-ce-universal/releases)
+(or the `halo-ce-ios-unsigned` artifact of a successful iOS GitHub Actions
+run, which needs a GitHub sign-in). The simulator ZIP cannot run on an iPhone.
 
 The script signs locally using a certificate/private key already in your
 Keychain and a provisioning profile issued for your account. It does not
