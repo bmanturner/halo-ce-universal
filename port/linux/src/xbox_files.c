@@ -7,6 +7,8 @@ Xbox paths are translated below two roots. d:\ is the data root, the
 directory holding the game's maps/ folder: paths.data (port_config.c), else the current
 directory when it has maps/, else assets/ in the current directory or two
 levels above the executable (the repository root for build/linux/halo).
+d:\maps\ is paths.maps instead when that is set (the Apple TV app's maps are
+in its bundle, beside a writable data root).
 h:\ is the Halo Custom Edition install paths.custom_edition names, if any
 (its maps folder holds the resource maps Custom Edition maps need, and more
 maps).
@@ -204,11 +206,31 @@ const char *platform_custom_edition_root(void)
 	return root;
 }
 
+/* the folder paths.maps names, if any: the game's maps when they are not the
+data root's maps folder (the Apple TV app keeps them in its bundle, which it
+cannot write to, beside a writable data root) */
+static const char *maps_root(void)
+{
+	static char root[MAX_PATH];
+	static int found;
+
+	if (!found)
+	{
+		found = 1;
+		snprintf(root, sizeof(root), "%s", config_string("paths.maps"));
+		trim_separators(root);
+		if (root[0])
+			platform_log("maps: %s", root);
+	}
+	return root;
+}
+
 void platform_translate_path(const char *xbox_path, char *host_path, unsigned long host_path_size)
 {
 	char resolved[1024];
 	const char *cursor = xbox_path;
 	unsigned long length;
+	BOOL data_drive = TRUE;
 
 	snprintf(resolved, sizeof(resolved), "%s", platform_data_root());
 	if (((cursor[0] >= 'a' && cursor[0] <= 'z') || (cursor[0] >= 'A' && cursor[0] <= 'Z')) && cursor[1] == ':')
@@ -218,6 +240,7 @@ void platform_translate_path(const char *xbox_path, char *host_path, unsigned lo
 		if (drive == 'h' && platform_custom_edition_root()[0])
 		{
 			snprintf(resolved, sizeof(resolved), "%s", platform_custom_edition_root());
+			data_drive = FALSE;
 		}
 		else if (drive != 'd')
 		{
@@ -227,8 +250,23 @@ void platform_translate_path(const char *xbox_path, char *host_path, unsigned lo
 			/* every Xbox drive always exists; create its directory on first use */
 			if (posix_stat(resolved, &information) != 0)
 				posix_make_directory(resolved);
+			data_drive = FALSE;
 		}
 		cursor += 2;
+	}
+	/* d:\maps\ is paths.maps when that is set */
+	if (data_drive && maps_root()[0])
+	{
+		const char *name = cursor;
+
+		while (*name == '\\' || *name == '/')
+			name++;
+		if ((name[0] | 0x20) == 'm' && (name[1] | 0x20) == 'a' && (name[2] | 0x20) == 'p' && (name[3] | 0x20) == 's' &&
+			(!name[4] || name[4] == '\\' || name[4] == '/'))
+		{
+			snprintf(resolved, sizeof(resolved), "%s", maps_root());
+			cursor = name + 4;
+		}
 	}
 
 	while (*cursor)
