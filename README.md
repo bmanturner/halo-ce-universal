@@ -109,8 +109,11 @@ netcode.
 
 ## Other platforms
 
-The code still builds for Linux, Windows, Android and the web; their
-instructions are in [port/linux](port/linux/README.md),
-[port/windows](port/windows/README.md), [port/android](port/android/README.md)
-and [port/web](port/web/README.md). A native Mac app is built with
-`python3 tools/macos_build.py` ([port/macos](port/macos/README.md)).
+This fork supports iPhone, iPad and Apple TV only. The code also contains
+ports to Linux, Windows, Android, the web and the Mac, with their
+instructions in
+[port/linux](port/linux/README.md), [port/windows](port/windows/README.md),
+[port/android](port/android/README.md), [port/web](port/web/README.md) and
+[port/macos](port/macos/README.md), but this fork does not build, test or
+release them, and they may not work. For Linux, Windows and Android, use
+[OpenCE](https://github.com/OpenCommunityEdition/OpenCE).
