@@ -31,6 +31,11 @@ Application Support directory). Saves and settings live
 outside the replaceable game generation. Existing installations that only
 have extracted maps must select their image once; existing maps/saves are kept.
 
+`tools/tvos_build.py` is the exception to the rule that builds hold no game
+data. tvOS has no import path, so it copies the user's maps into the Apple TV
+app. Those builds are personal and must not be published. Published Apple
+builds still contain no game data.
+
 ## Rights and distribution channels
 
 The upstream project labels its contributions CC0, and dependency licenses

@@ -129,6 +129,7 @@ void halo_graphics_set_preference(int value) {
 }
 void halo_graphics_initialize(void) {
     metal=halo_graphics_prefer_metal();
+    const char *why="";
 #if HALO_MACOS
     metal=YES; /* macOS package ships ANGLE Metal; Apple has no GLES driver. */
 #endif
@@ -136,7 +137,13 @@ void halo_graphics_initialize(void) {
     NSString *test=NSProcessInfo.processInfo.environment[@"HALO_IOS_TEST_RENDERER"];
     if([test isEqualToString:@"metal"] || [test isEqualToString:@"opengl"])metal=[test isEqualToString:@"metal"];
 #endif
-    host_logf(HOST_LOG_INFO,"Renderer: %s",metal?"Metal (ANGLE)":"OpenGL ES (Apple)");
+#if TARGET_OS_TV
+    /* ANGLE is optional in the tvOS build; without it only Apple's OpenGL ES exists. */
+    NSString *angle=[NSBundle.mainBundle.privateFrameworksPath stringByAppendingPathComponent:@"libGLESv2.framework/libGLESv2"];
+    if(![NSFileManager.defaultManager fileExistsAtPath:angle]){metal=NO;why="; ANGLE is not in this build";}
+    else why=metal?"; ANGLE is in this build":"; OpenGL ES is preferred";
+#endif
+    host_logf(HOST_LOG_INFO,"Renderer: %s%s",metal?"Metal (ANGLE)":"OpenGL ES (Apple)",why);
 }
 int halo_graphics_metal(void) {return metal;}
 void *halo_graphics_proc(const char *name) {

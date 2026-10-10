@@ -377,7 +377,8 @@ branch `ios-port`. Integration changes keep PR #12's current game/network source
 use its musl math, preserve other platforms, and connect the Apple runtime to
 browser rooms. Apple distribution builds omit the embedded HUD/title/font
 replacements. This target builds iPhone/iPad apps; [port/macos](../macos/README.md)
-builds the native Mac app. Dedicated visionOS and tvOS products remain open.
+builds the native Mac app and [port/tvos](../tvos/README.md) the Apple TV app.
+A dedicated visionOS product remains open.
 
 ## How the port works
 
