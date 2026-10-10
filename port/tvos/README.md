@@ -43,8 +43,13 @@ The script:
 1. runs `tools/ios_build.py --guest-only`, which builds the shared Apple guest;
 2. makes `build/third_party/SDL3-tvos`, a copy of SDL 3.4.16 in which the
    OpenGL ES option is allowed on tvOS (SDL turns it off there by default);
-3. configures `port/tvos` with Xcode (tvOS 17.0 minimum, Apple TV device
+3. builds ANGLE for tvOS with `tools/tvos_angle.py` (see below);
+4. configures `port/tvos` with Xcode (tvOS 17.0 minimum, Apple TV device
    family) and builds it with automatic signing.
+
+The first run fetches depot_tools and ANGLE's sources and builds ANGLE: about
+7 GB under `build/third_party/angle-tvos` and about 10 minutes. Later runs
+reuse it.
 
 The output is `build/tvos/app/Release-appletvos/HaloCE.app`. Install it with
 `--install DEVICE`, or with:
@@ -132,7 +137,7 @@ app (SDL's controller UI events hint is off); use the TV/Home button.
 
 | | Apple TV |
 | --- | --- |
-| Renderer | Apple's OpenGL ES 3.0 (EAGL) through SDL's GL context, the iOS app's "opengl" path. No MetalFX and no ANGLE shader cache. `host_graphics.m` switches to ANGLE automatically once ANGLE's frameworks are in the bundle; no tvOS ANGLE slice is packaged yet |
+| Renderer | ANGLE's Metal backend (OpenGL ES on Metal), built from source for tvOS by `tools/tvos_angle.py` at the same ANGLE revision as the iOS package (c053bf85, version 2.1.28252) and embedded by `port/tvos/CMakeLists.txt`. `host_graphics.m` picks it when ANGLE's frameworks are in the bundle; Apple's OpenGL ES 3.0 (EAGL) through the SDL copy with OpenGL ES allowed remains the fallback. The ANGLE shader cache works on the Apple TV. It is kept in Caches, so tvOS may empty it, and the first launch after that compiles the shaders again (on the A15 that froze loading for about 2.4 s and the game for about 1.1 s, once). The drawable is 1920x1080 on purpose: the TV scales it to 4K, and a 4K drawable cost about 0.9 ms a frame. MetalFX is not used: on the A15, MetalFX 720p to 1080p cost about 5 ms of GPU time a frame and 720p to 4K 13-15 ms, more than drawing at 720p saved (about 2.2 ms). It does work on tvOS 27.0 (`supportsDevice` is YES on the A15), although Apple's documentation lists tvOS 27.1. ANGLE does not offer S3TC on the A15 Apple TV either (Metal reports no BC texture support), so DXT textures are still decoded on the CPU |
 | Render height | 1080 by default (`HaloRenderHeight` in `port/tvos/Info.plist`); the Video Settings row still changes it |
 | Display mode | The game draws standard dynamic range and asks tvOS for that mode (`AVDisplayManager.preferredDisplayCriteria`, `host_platform.m`). With Settings > Video and Audio > Match Content > Match Dynamic Range on, the TV switches to SDR while the game is in front, which lets TVs that refuse their game mode in HDR use it, and back for the Home screen and other apps; HDR video elsewhere still plays in HDR. The request names the refresh rate the TV has at launch (the Format setting's), so Match Frame Rate leaves it unchanged, and the game's Frame Rate setting (30 Classic, 60, Display) paces frames within it. Without Match Content tvOS ignores the request and keeps the Format setting's mode. The log says `display: asked for SDR at 60 Hz, the current refresh rate (Match Content on)`, or `off` |
 | Game data | Built into the app, not imported |
@@ -182,6 +187,7 @@ xcrun devicectl device copy from --device DEVICE --domain-type appDataContainer 
 | `port/tvos/tvos_host.h` | The header the two host files share |
 | `port/tvos/Assets.xcassets` | The brand assets, made by `tools/tvos_icon.py` from `port/apple/RingArtwork.png` |
 | `tools/tvos_build.py` | The build, the SDL copy and the install |
+| `tools/tvos_angle.py` | Builds ANGLE's `libEGL` and `libGLESv2` frameworks for tvOS |
 
 The rest of the app, the guest, the address arena and the ABI bridges, is
 shared with the iOS build. The SDL copy in `build/third_party/SDL3-tvos`
@@ -193,7 +199,8 @@ differs from the pinned SDL clone (`build/third_party/SDL3`, made by
 
 On an Apple TV 4K (3rd generation, A15, `AppleTV14,1`) with tvOS 27.0
 (24J361), 2026-10-10, unattended through `devicectl` with the diagnostics
-above:
+above. The rows up to Display mode were taken with Apple's OpenGL ES, before
+the app drew with ANGLE:
 
 | Check | Result |
 | --- | --- |
@@ -204,7 +211,10 @@ above:
 | DualSense, by hand | SDL reports it as a PlayStation 5 gamepad; the D-pad, the stick, Cross and Circle move through and open the menus. The person holding it found the menus a little delayed. One quick D-pad tap of two never reached SDL, which reads the controller's state once a frame, and the other showed as held for 15 ms. `host_platform.m` now latches every press and passes on a tap that falls between two reads (it logs `controller: a tap between two reads of button N, passed on`); not yet checked by hand |
 | Graphics settings | MSAA left the screen black (sound still played): SDL presents the renderbuffer bound at the swap, and the game's multisampled targets had left theirs bound. With the view's renderbuffer bound before the swap, every anti-aliasing mode draws (off, FXAA, SMAA, SSAA 2X, MSAA 2X, 4X, 8X; the GPU allows at most 4 samples, so 8X draws 4X), as do render heights 720 and 1440 and the shadow and per-pixel lighting settings. The drawable is 1920x1080, so render heights above 1080 draw the same as Native. Blood Gulch with MSAA 2X, 512 shadow maps and per-pixel lighting: 59.9 fps over 60 s |
 | Display mode | With Match Content on and the Format set to HDR, the TV switched to SDR when the game started and turned on its game mode, which it refuses in HDR (seen at the TV); the log shows `display: mode switch finished` |
+| ANGLE | `tools/tvos_angle.py` built the frameworks (LC_BUILD_VERSION platform 3, tvOS 17.0, arm64) and `tools/tvos_build.py` embedded and signed them. The app logs `Renderer: Metal (ANGLE); ANGLE is in this build` and `OpenGL ES 3.0 (ANGLE 2.1.28252 git hash: c053bf85793b)`; of the capabilities only base vertex is added (S3TC, copy image, border clamp and sample counting are still absent); the render target and drawable are 1920x1080; the shader cache loads its blobs on later launches. Blood Gulch (`host:bloodgulch`, `look:1`): 59.9 fps over 60 s, slowest second 58.0, twice |
+| ANGLE against Apple's OpenGL ES | In a probe on Blood Gulch (FXAA, 256 shadow maps, per-pixel lighting, both at a 1920x1080 drawable), the GPU work left at each present (`glFinish` wait) was 5.8 ms a frame with ANGLE and 8.3 ms with Apple's OpenGL ES. A 3840x2160 drawable added about 0.9 ms; MetalFX 1280x720 to 1920x1080 cost about 5 ms and to 3840x2160 13-15 ms. A busy 16-player fight was not measured |
 
 Not checked yet: play with a controller beyond the menus (input feel in the
 game, rumble), the Siri Remote in the menus, text entry, internet play with
-another machine, and Apple TV 4K models before the 3rd generation.
+another machine, busy fights with ANGLE, and Apple TV 4K models before the
+3rd generation.

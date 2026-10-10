@@ -35,6 +35,11 @@ dependency notices (xxHash, ceval, glslang, SPIR-V headers/tools/cross, Abseil,
 and zlib) are copied into the app's `Licenses` directory. ANGLE receives only
 native graphics calls; it is not a browser or a WASM runtime.
 
+The Apple TV app builds the same ANGLE revision from source with
+`tools/tvos_angle.py` (depot_tools pinned at
+`a03dfbf7f2d1cefa2795d81d59ca4f16c8616a8f`), because the package has no tvOS
+slice. It ships the same notices.
+
 - Monocypher 4.0.3, vendored from upstream `c04765d7`, implements the signed
   public-server listings. See `port/third_party/monocypher/LICENCE.md`; that
   license is included in both app bundles under Licenses/Monocypher.
