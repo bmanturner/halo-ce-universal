@@ -75,7 +75,7 @@ SCREENS = {
             ("SMOOTH MOTION:", "display.interpolation", ON_OFF,
              "Draw a frame for every display refresh, blending\nbetween the game's 30 ticks a second.", "!ios"),
             ("FRAME RATE:", "display.frame_rate",
-             [("DISPLAY", "0"), ("60", "60"), ("30 CLASSIC", "30")],
+             [("30 CLASSIC", "30"), ("60", "60"), ("DISPLAY", "0")],
              "Display: a frame each refresh. 60 saves power;\n30 Classic is the Xbox's, not blended.", "ios"),
             ("INSTANT AIM:", "display.direct_camera", ON_OFF,
              "In first person, turn the view the moment the\nmouse moves, not up to two ticks later.", "desktop"),

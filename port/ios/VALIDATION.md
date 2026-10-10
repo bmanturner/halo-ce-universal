@@ -8,8 +8,8 @@ Reports of gameplay on the original iOS fork are not validation of this merge.
 
 ## Frame rate setting — 2026-10-10
 
-`display.frame_rate` (iOS): Video Settings' FRAME RATE row (DISPLAY, 60,
-30 CLASSIC) in SMOOTH MOTION's place on the touch layout (menu platform
+`display.frame_rate` (iOS): Video Settings' FRAME RATE row (30 CLASSIC, 60,
+DISPLAY) in SMOOTH MOTION's place on the touch layout (menu platform
 `!ios` for SMOOTH MOTION). 30 is the Xbox's path; above 30 is Smooth Motion
 capped by the host (`halo_graphics_pace_frame`, before the ANGLE swap and the
 MetalFX present), skipped while the panel refreshes no faster than the cap.

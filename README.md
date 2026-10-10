@@ -18,7 +18,7 @@ Not in upstream OpenCE:
 - **Field of view** setting in Video Settings (60–110; 70 is the game's own).
 - **Render height** setting in Video Settings (iOS): draw at fewer pixels
   and upscale, after a relaunch.
-- **Frame rate** setting in Video Settings (iOS): Display, 60 or 30 Classic,
+- **Frame rate** setting in Video Settings (iOS): 30 Classic, 60 or Display,
   in place of Smooth Motion.
 - **Custom Edition maps on iPhone and iPad:** put them, with Halo PC's
   `bitmaps.map`, `sounds.map` and `loc.map`, in Files > Halo >
