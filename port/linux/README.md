@@ -191,7 +191,8 @@ computer (co-op, or split screen in a network game) and only one gamepad,
 that gamepad is controller 2 (player 2) and the keyboard and mouse stay
 controller 1. The gamepad changes controller only when none of its buttons
 is held. The profile's button layout (Settings > Gamepads) is the
-gamepads' only.
+gamepads' only. Clicking and holding the touchpad of a DualSense or
+DualShock 4 also shows the scoreboard in the game, as holding BACK does.
 
 | Action | Keys and buttons (default) |
 | --- | --- |

@@ -48,5 +48,10 @@ unsigned long halo_keyboard_actions(short controller_index);
 /* whether voice chat's push to talk is held (controls.push_to_talk), in the
 game and in the menus alike */
 int halo_push_to_talk_held(void);
+/* whether the gamepad (controller 1 to 4) has its touchpad clicked and held:
+the DualSense's and DualShock 4's, which holds the scoreboard open as Back
+does, without being Back (the menus' and the carnage report's); never for a
+pad without a touchpad */
+int halo_gamepad_scoreboard_held(short controller_index);
 
 #endif

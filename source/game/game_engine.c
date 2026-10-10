@@ -574,6 +574,7 @@ symbols in this file:
 #include "networking/network_game_manager.h"
 #include "network_coop.h" /* port: port/linux/game/network_coop.c */
 #include "network_votekick.h" /* port: port/linux/game/network_votekick.c */
+#include "halo_keyboard.h" /* port: port/linux/include/halo_keyboard.h */
 #include "network_voice.h" /* port: port/linux/game/network_voice.c */
 /* (network_server_manager_internal.h's: the host's game record) */
 struct network_game *network_game_server_get_game(struct network_game_server *server);
@@ -4154,8 +4155,11 @@ static void game_engine_post_rasterize_in_game(
 
 	gamepad = input_get_gamepad_state(local_player_index);
 	fade = game_engine_globals.hud_message_timers[local_player_index];
+	/* port: a DualSense's or DualShock's touchpad, clicked and held, shows the
+	scoreboard as Back does (port/linux/src/xinput_sdl.c) */
 	if ((!gamepad ||
 		!gamepad->buttons[_gamepad_binary_button_back]) &&
+		!halo_gamepad_scoreboard_held(local_player_index) &&
 		(!game_engine || game_engine_globals.postgame_state != game_engine_mode_postgame_delay))
 	{
 		/* a frame is no longer a tick (render_interpolation.c): fade in half

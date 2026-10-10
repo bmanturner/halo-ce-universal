@@ -70,6 +70,7 @@ struct controller
 	BOOL open;
 	DWORD packet_number;
 	XINPUT_GAMEPAD previous;
+	int scoreboard_held;
 };
 
 static struct controller controllers[PORT_COUNT];
@@ -515,6 +516,13 @@ unsigned long halo_keyboard_actions(short controller_index)
 	return controller_index == 0 ? keyboard_actions_held : 0;
 }
 
+int halo_gamepad_scoreboard_held(short controller_index)
+{
+	if (controller_index < 0 || controller_index >= PORT_COUNT)
+		return 0;
+	return __atomic_load_n(&controllers[controller_index].scoreboard_held, __ATOMIC_RELAXED);
+}
+
 int halo_push_to_talk_held(void)
 {
 	struct platform_input_state input;
@@ -860,7 +868,10 @@ VOID WINAPI XInputClose(HANDLE device)
 	struct controller *controller = (struct controller *)device;
 
 	if (controller)
+	{
 		controller->open = FALSE;
+		__atomic_store_n(&controller->scoreboard_held, 0, __ATOMIC_RELAXED);
+	}
 }
 
 static int controller_port(HANDLE device)
@@ -921,6 +932,16 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 	else if (port_gamepad(gamepads, count, port))
 	{
 		sdl_gamepad_state(port_gamepad(gamepads, count, port), &state->Gamepad);
+	}
+	/* the touchpad's click is not a button of the Xbox pad: it only holds the
+	scoreboard open (halo_gamepad_scoreboard_held), where Back would also back
+	out of menus; refreshed each poll, so a pad let go of cannot leave it held */
+	{
+		SDL_Gamepad *pad = port == 0 ? (port_gamepad(gamepads, count, 0) ? gamepads[0] : NULL) :
+			port_gamepad(gamepads, count, port);
+
+		__atomic_store_n(&controllers[port].scoreboard_held,
+			pad && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_TOUCHPAD) ? 1 : 0, __ATOMIC_RELAXED);
 	}
 
 	if (memcmp(&state->Gamepad, &controllers[port].previous, sizeof(state->Gamepad)))
