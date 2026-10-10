@@ -176,10 +176,11 @@ static BOOL createSurface(void) {
 /* Presenting: this function owns the frame's only present, so the caller skips
    the ANGLE swap. Pacing comes from [layer nextDrawable] (display-synced, three
    drawables) together with the two-frame semaphore, which is what eglSwapBuffers
-   gave the ANGLE path. A failure returns 0 and every later frame is presented by ANGLE. */
+   gave the ANGLE path, and from the frame rate cap, waited out after the present
+   as the swap does. A failure returns 0 without waiting (the caller's swap
+   waits) and every later frame is presented by ANGLE. */
 int host_ios_metalfx_present(unsigned int texture,unsigned int w,unsigned int h,unsigned int ow,unsigned int oh) {
     if(!enabled || failed || !w || !h || !ow || !oh)return 0;
-    halo_graphics_pace_frame();
     @autoreleasepool {
         GLint oldRead,oldWrite,oldTexture;glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&oldRead);glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&oldWrite);glGetIntegerv(GL_TEXTURE_BINDING_2D,&oldTexture);
         BOOL scissor=glIsEnabled(GL_SCISSOR_TEST),success=YES,acquired=NO,submitted=NO;
@@ -258,6 +259,7 @@ int host_ios_metalfx_present(unsigned int texture,unsigned int w,unsigned int h,
             failed=YES;surface.hidden=YES;releaseImages();
             host_logf(HOST_LOG_WARN,"MetalFX presentation stopped; using the normal Metal path");
         }
+        if(success)halo_graphics_pace_frame();
         return success;
     }
 }

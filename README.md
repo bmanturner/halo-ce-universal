@@ -22,7 +22,10 @@ Not in upstream OpenCE:
 - **Render height** setting in Video Settings (iOS): draw at fewer pixels
   and upscale, after a relaunch.
 - **Frame rate** setting in Video Settings (iOS): 30 Classic, 60 or Display,
-  in place of Smooth Motion.
+  in place of Smooth Motion. At 60 each frame is shown as soon as it is drawn,
+  and the wait for the next comes before it reads the controls.
+- **Game Mode** on iPhone and iPad: iOS gives the game priority and polls
+  Bluetooth controllers twice as often.
 - **Custom Edition maps on iPhone and iPad:** put them, with Halo PC's
   `bitmaps.map`, `sounds.map` and `loc.map`, in Files > Halo >
   CustomEdition > maps.

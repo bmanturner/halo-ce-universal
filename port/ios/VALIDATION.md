@@ -47,6 +47,9 @@ Not yet verified. Items the log shows as done are not listed.
   touch or controller talk button, and no echo cancellation).
 - Controllers: rumble on iOS by feel; Backbone and other PlayStation hardware
   (a DualSense is verified).
+- Game Mode turning on (Control Center shows the game's Game Overlay) and its
+  effect on controller latency; the on-screen cadence at FRAME RATE 60 since
+  the wait moved after the present.
 - Hosting after a background resume; a game under way across a background
   shorter than 20 seconds; other platforms' behavior after a long `select` gap
   (the STUN and broker refresh is shared code); WebKit process termination
@@ -87,6 +90,33 @@ It needs internet access but no game assets or signing account. It is not run
 by default CI, because external signaling and GUI availability are variable.
 
 ## Log
+
+### Frame pacing after the present, and Game Mode — 2026-10-10
+
+FRAME RATE 60 used to draw a frame, wait for its slot, then present it, so the
+controls the frame read were older by the wait. `halo_graphics_pace_frame` now
+runs right after the present (`host_sdl.c` swap, `host_metalfx.m` present, the
+latter only when MetalFX presented), so the wait falls before the next frame
+reads the controls. `Info.plist` declares `LSSupportsGameMode` and the games
+category (`public.app-category.games`).
+
+Observed on the iPad Pro 11" (4th gen, M2), Low Power Mode off, the user's
+settings (render height 1080, MSAA 2x, MetalFX off), frames counted from
+`debug.gpu_stats`:
+
+| Scene | FRAME RATE | fps | Slowest 1 s window |
+| --- | --- | --- | --- |
+| Main menu | 60 | 60.0 | 59.8 |
+| Main menu | DISPLAY | 120.0 | 116.0 |
+| Blood Gulch hosted, `look:1`, after the load | 60 | 60.0 | 59.9 |
+
+The map load's window was 44 fps. A throwaway probe in the pacer measured the
+wait now taken before the frame instead of before its present: 11.0 to
+11.8 ms of each 16.67 ms frame in Blood Gulch, which is how much sooner a
+frame is presented after it reads the controls. Not measured: the on-screen
+cadence (ANGLE reports no presentation times; the present time now varies with
+the frame's drawing time), the MetalFX path at 60, and whether Game Mode
+turned on.
 
 ### Release — 0.2.0 (15), 2026-10-10
 

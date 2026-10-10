@@ -186,9 +186,17 @@ Motion on the touch layout, and `display.interpolation` is not used there. `0`
 (DISPLAY) draws a frame for each refresh of the display; `30` (30 CLASSIC) is
 the Xbox's 30 frames each second, not blended; above `30` (the menu offers 60)
 is Smooth Motion capped at that rate. ANGLE's Metal backend ignores the swap
-interval, so the host paces the frames itself, just before presenting. It does
-not pace them when the display already refreshes no faster than the cap, such
-as in Low Power Mode. The Mac app keeps the SMOOTH MOTION row.
+interval, so the host paces the frames itself: it presents each frame as soon
+as it is drawn, then waits for the next frame's slot, so the next frame reads
+the controls as late as possible. It does not pace them when the display
+already refreshes no faster than the cap, such as in Low Power Mode. The Mac
+app keeps the SMOOTH MOTION row.
+
+The app declares Game Mode support (`LSSupportsGameMode` and the games
+category in `Info.plist`), so iPadOS and iOS 18 or later turn on Game Mode
+while it is full screen: it gets priority on the CPU and GPU, and Bluetooth
+controllers and AirPods are polled twice as often. Control Center shows it
+under the game's Game Overlay.
 
 ### Touch and controller input
 

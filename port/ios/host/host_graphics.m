@@ -73,9 +73,10 @@ void host_ios_set_frame_rate(unsigned int frames_per_second) {
 #endif
 }
 
-/* Render thread, immediately before the present. A panel already refreshing
-   no faster than the cap (Low Power Mode) paces itself; limiting it as well
-   made it stutter. */
+/* Render thread, right after the present: the wait comes before the next frame
+   reads the controls, so each frame is shown as soon as it is drawn. A panel
+   already refreshing no faster than the cap (Low Power Mode) paces itself;
+   limiting it as well made it stutter. */
 void halo_graphics_pace_frame(void) {
     static unsigned appliedCap;
     static uint64_t deadline;
