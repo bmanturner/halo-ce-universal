@@ -1,438 +1,393 @@
-# Web (iPhone, iPad, Android and desktop browsers)
+# The web build
 
-`ninja web` builds the game as WebAssembly, with a page that installs as a
-home-screen web app: `build/web/site`. On an iPhone or iPad, open the page in
-Safari, tap Share, then *Add to Home Screen*. On Android, open it in Chrome
-(or Edge, or Samsung Internet) and push *Install app* on the page, or choose
-*Install app* in the browser's menu. The installed app runs full screen and
-works offline.
+The web build runs the game in a web browser, as WebAssembly. It is the
+same game and platform layer as the Linux build, with the OpenGL ES renderer
+of the Android build drawing through WebGL 2. Play it at
+<https://halocombatevolved.com/>: every build of `main` that passes on all
+platforms is published there (and as `halo-web-release.zip` in the release,
+for your own server).
 
-The GitHub Actions workflow `.github/workflows/web.yml` builds and tests the
-site for each pushed commit. The public game is packaged and deployed
-separately; see [GITHUB_PAGES.md](../../GITHUB_PAGES.md).
+The site serves no game data. The page copies the `maps/` folder out of your
+own Xbox disc image of Halo: Combat Evolved into the browser's storage for
+the site. Nothing is uploaded.
 
-The web build uses the platform layer of the Linux build (`port/linux/src`)
-and the code paths of the Android build (OpenGL ES 3, the display's shape).
-Refer to [port/linux/README.md](../linux/README.md) and
-[port/android/README.md](../android/README.md).
+## What it needs
 
-## Requirements
-
-To play:
-
-- iOS or iPadOS 17 or later (Safari, or the installed web app), Android with
-  a recent Chrome, or a recent Chrome, Edge or Firefox on a computer. The browser needs WebGL 2 in a worker
-  (OffscreenCanvas), SharedArrayBuffer and the Origin Private File System.
-- About 2 GB of free storage for the game data.
-- An Xbox disc image (`.iso` or `.xiso`) of Halo: Combat Evolved, any version.
-
-To build:
-
-- Python and ninja.
-- Emscripten 6 or later: `emcc` on the `PATH`, or the SDK in `~/emsdk`
-  (`configure.py --web-emcc` names another). Install it with
-  [emsdk](https://emscripten.org/docs/getting_started/downloads.html).
-- A network connection for the first build: `configure.py` downloads the
-  SDL 3.4.16 headers to `build/web/third_party`.
-
-```
-python configure.py --release
-ninja web
-```
-
-To try the site on a computer, serve `build/web/site` over HTTP, for example
-with `python -m http.server -d build/web/site`, and open
-`http://localhost:8000`. The page reloads once while its service worker
-starts (see "Cross-origin isolation").
+- A desktop browser: Chrome or Edge, or Firefox. Safari 17 or later may
+  work. The page checks what it needs and says what is missing.
+- A 64-bit browser that gives the page 2.1 GB of memory (the Xbox's memory
+  window is at its top: "How it operates"). Desktop browsers do; a phone's
+  may not (the page says so), and iPhones are untried.
+- About 3 GB of the browser's storage: the maps (about 2 GB), and the
+  game's copies of the maps it played (up to about 800 MB, as on the Xbox's
+  hard disk), and the disc image (`.iso` or `.xiso`) on the computer.
+- The site over https (or `localhost`): the game's threads need
+  `SharedArrayBuffer`, and so a cross-origin isolated page. GitHub Pages
+  cannot send the headers for that; the site's service worker adds them, so
+  the page loads once more on the first visit.
 
 ## Game data
 
-1. Open the app. It checks what the browser supports.
-2. Push *Choose disc image* and select the disc image. On an iPhone, it can
-   be in the Files app (iCloud Drive, On My iPhone, a USB drive).
-3. Wait while the page copies the `maps` folder (about 1.8 GB) into the
-   app's private storage. The disc image is read in place and not changed.
-4. Push *Play*.
+1. Open the site. The **This browser** panel lists the checks.
+2. Under **Game data**, choose **Choose a disc image…** and select the disc
+   image. The page reads it in place and copies `maps/` into the browser's
+   storage (about a minute for 2 GB). **Choose a maps folder…** takes a
+   `maps/` folder that an earlier extraction made (a desktop build's).
+3. Choose **Play**.
 
-The copy is kept in the site's Origin Private File System. The saved games
-(`z:\`, `u:\`) and `config.toml` are there too. *Settings and data* can
-export the saved games as a `.zip` and delete the game data. On iOS, data of
-a site that is not installed can be removed by the system after some weeks
-without use: install the app to keep it.
+Every map is checked as the game checks it before it is copied (its `head`
+and `foot` signatures, the Xbox cache version and the build of a retail disc,
+`01.10.12.2276`, or of the decompilation, `01.01.14.2342`). A disc image is
+untrusted input: the reader checks every offset and size in it.
 
-## Controls
+The page asks the browser to keep the site's data. A browser that is short
+of space may delete it otherwise; **Settings and data** says which. The
+storage belongs to the site's address: `halocombatevolved.com` and the
+repository's `github.io` address do not share it.
 
-### iPhone rotation and sound
+## Playing
 
-- If the page stays upright when you turn the phone sideways, Portrait
-  Orientation Lock may be on. Swipe down from the top-right to open Control
-  Center and turn it off (the padlock with a circular arrow).
-- For sound, swipe down to Control Center, turn off Silent Mode if its control
-  is available, and raise the volume. Otherwise, use the Ring/Silent switch
-  or the Action button if it is assigned to Silent Mode.
-- On iPhones with a Home button, open Control Center by swiping up from the
-  bottom instead.
+The controls are the desktop builds' (refer to "Controls" in
+[port/linux/README.md](../linux/README.md)), with these differences:
 
-Apple's guides cover [screen rotation](https://support.apple.com/guide/iphone/rotate-your-iphone-screen-iph3badf94ec/ios),
-[Control Center](https://support.apple.com/guide/iphone/use-and-customize-control-center-iph59095ec58/ios),
-and [Silent Mode](https://support.apple.com/guide/iphone/silence-iphone-iph81c7fd7d1/ios).
+- Crouch is **C** only: a page cannot keep Ctrl+W (close the tab), Ctrl+S
+  or Ctrl+D from the browser.
+- A click on the game takes the mouse for aiming; **Escape** gives it back
+  (the browser's rule). In the menus the mouse moves the menus' pointer.
+- **Tab** stays with the game (the scoreboard, switching weapons).
+- The **Fullscreen** button (top right) takes the page fullscreen. F11 is
+  the browser's own.
+- A controller works once one of its buttons is pressed: browsers show a
+  page a controller only then.
+- The sound starts at the first click or key press (browsers allow sound only
+  then).
+- On a touchscreen, the Android app's on-screen controls (a stick, the
+  controller's buttons named by the profile's mapping, a swipe to turn) show
+  in a game while no controller is connected (`input.touch_controls`:
+  `auto`, `on`, `off`); the menus take taps. The phone vibrates with the
+  controller's rumble where the browser lets it. There is no layout editor
+  nor gyroscope aiming yet.
 
-### Game input
+The game keeps `config.toml`, the saved games and profiles (`save/`) and
+`debug.txt` in the browser's storage beside `maps/`. **Settings and data**
+exports the saved games, the profiles and `config.toml` as a zip (not the
+game's copies of the maps), downloads the log, and deletes the game
+data. The game's own Settings screens have the settings that apply in a
+browser.
 
-Settings and data offers an optional **Compact FPS touch controls (gameplay)**
-layout. Select it before starting; the original controller layout remains the
-default and includes menu-navigation buttons. The compact layout has a floating
-movement stick that is invisible at rest, drag-to-aim, and hold-to-fire with
-immediate release. Dragging the Fire action also aims. Tap the upper-left
-weapon/ammo HUD to swap weapons. Smaller action buttons provide jump, melee,
-reload/use, crouch, zoom, grenade throw and grenade-type switching.
+### Playing together
 
-The compact HUD omits D-pad, Start/Select and flashlight controls. It assumes a
-full-viewport landscape game canvas. Its input is released on interruption,
-backgrounding, resize or controller connection. Test its input handling with
-`node --test tools/test_web_touch_controls.mjs` (Node.js 22 or newer).
+**Over the internet**, as the Linux, Windows and Android builds play, and
+with them: Multiplayer, Create Game > Internet hosts a game (PUBLIC lists it
+in everyone's server browser), and Join Game > Server Browser lists the
+public games, the native builds' and the browsers' alike. A game hosted here
+shows its invite link at the top of the page, with a button that copies it:
+the site's address with `?join=<code>`, which opens the site and joins the
+game, and which a native build takes too (pasted, or on its command line);
+the native builds' own `halo://join/` links work pasted into the address
+after `?join=`. Network Setup's INTERNET PLAY turns it off.
 
+The browser reaches each other machine of the game directly, over WebRTC
+(its router permitting, as for the native builds: "Internet play" in
+[port/linux/README.md](../linux/README.md)); a native build takes the
+browser's WebRTC on its tunnel's port (port/linux/src/p2p_webrtc.c). They
+find each other through the same public MQTT brokers, here over secure
+WebSockets (EMQX's, HiveMQ's and Mosquitto's: the native builds' first broker
+has none), with everything sealed as between native builds.
 
-- A controller that the browser knows (Xbox, PlayStation, MFi, Switch Pro):
-  as on Android. The browser sees a controller only after a button is pushed.
-- Touch: the left half of the screen is a stick for moving; drag on the right
-  half to aim; the buttons are the controller's. The touch controls hide
-  while a controller is connected. *Settings and data* sets the aim
-  sensitivity, or turns the touch controls off.
-- A keyboard and mouse (iPad or computer): as on Linux. Click the game to lock
-  the pointer; Esc releases it. Hold Tab (or F1) to show the multiplayer
-  scoreboard; `(HOST)` identifies the current host beside their player name
-  and follows host migrations. The Ping column shows each player's measured
-  round-trip latency to that host in milliseconds (host: `0`, unavailable or
-  stale: `--`). The host probes every three seconds and shares its measurements;
-  changing hosts clears the previous measurements. Use the mouse wheel to
-  change weapons.
-- Empty or whitespace-only player names receive a random, unique name from the
-  host, including players joining after the match starts.
+**In a room**: under **Play together**, **Create a room** makes a room and
+its link (`https://halocombatevolved.com/?room=<secret>`): send it to your
+friends.
+Everyone who opens it is in the room, and the browsers of a room are as the
+machines of one local network to the game: host a game under Multiplayer and
+the others find it there, as system link games are found (up to 16
+browsers). The link's secret is the room: anyone with it can come in.
 
-## Online play
+The browsers connect to each other directly (WebRTC, through each one's
+router with the help of the STUN servers internet play uses). To find each
+other they post to a topic of the room on public MQTT brokers (EMQX's,
+HiveMQ's and Mosquitto's, over secure WebSockets): the topic is named by a
+hash of the secret and every message is sealed with a key derived from it,
+so the brokers see nothing of the room. A network that lets no WebRTC
+through (some company and school networks) keeps a browser out of rooms.
 
-The September 29, 2026 release combines automatic startup, solo System Link,
-host recovery, room switching and cached-launcher compatibility with the
-Chrome/macOS presentation and repeated-rejoin fixes. Each public site's
-`deployment.json` identifies the current source commit, runtime and packaged
-file hashes. Apply an offered update to use the new worker frame path.
+### Address parameters
 
-Historical Chrome testing on the earlier runtime `0780c5587f467c15` confirmed
-a one-player Blood Gulch start and a second player joining the running match
-(two players on two machines). Both tabs later suffered renderer crashes
-with error 11. Those observations describe the old runtime, before the
-presentation and reconnect fixes below.
+For testing, the page's address takes:
 
-Chrome-family browsers on macOS use a separate frame path. It reads
-the completed default framebuffer into owned RGBA bytes and transfers those
-bytes to a 2D page canvas, avoiding Chrome's crashing ImageBitmap serializer.
-Readback preserves GL state, reverses rows, and limits queued frames to two.
-The presentation height defaults to 480 lines to bound readback cost. Other
-browsers retain ImageBitmap presentation, with an empty-frame guard before
-transfer. `?frame_transport=rgba` and `?frame_transport=bitmap` select a path
-for controlled diagnostics; `?render_height=...` overrides presentation size.
-A new launcher can display frames from an older cached runtime; applying
-its offered update enables the new worker frame path.
+| Parameter | Effect |
+| --- | --- |
+| `?room=<secret>` | Joins that room (32 hex digits); `?brokers=ws://host:port[,...]` uses other MQTT brokers (WebSocket listeners), for rooms and internet play, as the tests do. |
+| `?join=<code>` | Joins that internet game once the game starts (an invite's 64 hex digits, as a `halo://join/` link ends). |
+| `?set=NAME=value` | Sets a setting's environment variable (the settings table in [port/linux/README.md](../linux/README.md)); repeat it for more. `?set=HALO_GL_DEBUG=1` reports WebGL errors in the log. |
+| `?menu=<screen>` | Opens a menu screen (`debug.menu_open`). |
+| `?map=<level>` | Starts a level: `a10`, or `levels\test\bloodgulch\bloodgulch`. The page writes `init.txt` for it, and removes it at the next visit without `?map=`. |
+| `?play` | Starts the game at once (when the game data is there). |
 
-Reloads retire the old RTC peer at its virtual address, deliver native EOF on
-connection loss, and replace its native stream only after the game releases
-the old endpoint. Pending validation cleanup closes accepted endpoints too;
-joining clients ignore gameplay traffic left over from the prior connection.
-Departed players leave their machine's input slots while their scores remain
-available. A browser host in distributed Free-for-All Slayer with unlimited lives keeps
-waiting when an opponent leaves; score limits and other game modes retain
-their own end conditions. These changes have socket and player lifecycle
-regressions alongside the browser transport tests.
+## Updates
 
-The prior local crash/rejoin build passed an initial late join followed by five
-consecutive same-address reload/rejoin cycles in Chrome on macOS. The same host match
-remained playable for over six minutes, including over two minutes after the
-final rejoin. Browser transport and native lifecycle regressions passed for
-that build. It predates combining the fixes with the host-recovery and room
-changes. The combined release passed `ninja web`, all 104 browser tests,
-cache and stream-recorder checks, and native lifecycle/restart regressions
-under AddressSanitizer and UndefinedBehaviorSanitizer. Physical-iPhone
-gameplay, other browsers and connections across different Internet/NAT
-networks still need live verification.
-
-Browser players can play together over the internet, with the game's own
-system link. The launcher joins the public **FQLX01** room on a first visit.
-Both hosted domains use that same room. Share a link ending in
-`?room=FQLX01` to enter it directly.
-
-Browser rooms need the UI and Beaver Creek maps before entering
-multiplayer automatically. The full main menu and desktop invites need all
-maps because they can use other scenarios. Import your own Xbox disc image
-in the launcher; existing completed maps are reused on later visits.
-The first ready player hosts Beaver Creek Slayer; the others join that host
-without navigating the game's System Link menus. The public room does not
-run a permanent game server.
-Players spawn with the human pistol in place of the map's plasma pistol,
-including late joins and respawns.
-
-When the host disconnects, quick play freezes the loaded match and elects a
-replacement from surviving players with a complete checkpoint of that match.
-The replacement adopts the existing world and roster; the other players
-reattach their original machine and player slots. Scores, positions, inventory
-and the match timer are retained. There is no automatic new-match fallback.
-If recovery cannot complete, the match stays paused until the player explicitly
-leaves. Everyone must use the new launcher and runtime.
-
-A brief lost connection has a 10-second grace period; silent WebRTC channels
-are detected after 25 seconds. Election and reconnecting add time after
-detection, without loading a new map. Authoritative checkpoints are sent every
-15 ticks, so authority-only state can resume from a recent checkpoint rather
-than the exact instant a tab crashed. Packet epochs fence previous hosts.
-*Main menu*, *Leave*, idle launchers and native invites do not participate.
-The room's public brokers are not a consensus service: network partitions can
-still produce divergent continuations. See [host migration](../linux/HOST_MIGRATION.md)
-for the checkpoint and resume contract and its verification limits.
-In historical September 29 testing on runtime `0780c5587f467c15`, Chrome's
-saved engine log confirmed that a two-player client joined at tick 655,
-lost the host connection, created a replacement local
-server and started a new solo match automatically. Those tabs later suffered
-the old runtime's renderer crash. The production restart/cancellation checks
-under sanitizers and Web/build CI passed for that release; the engine log
-does not establish sustained gameplay for the combined update.
-
-Connection, hosting and map-loading progress are shown on the page. Sound
-starts automatically where allowed; normal game input unlocks it and mouse
-controls when browser permissions require a gesture. *Main menu* cancels quick
-play; `?menu=1` opens the normal launcher and game menu instead.
-
-For a separate group, choose *New room*, then *Share link*. Opening that
-link joins its browser room, and the launcher remembers the chosen room.
-The in-game *Room* button opens the room controls. Choosing another room
-restarts Halo into that room using the cached maps; *Leave* closes the session
-and returns to the launcher. A link joins only the room named in `?room=`.
-*Leave* stays out across reloads; *Join default room* returns to FQLX01.
-Historical September 29 testing on the earlier runtime switched Chrome from
-FQLXQTEST8 into a fresh FQLXQTEST9
-match with cached maps, and a later client joined it as the second player
-on a second machine. The tabs subsequently crashed on that old runtime.
-Room-navigation regressions passed; these older observations do not verify
-sustained gameplay for the combined update.
-Manual System Link also allows a one-player start with distributed networking,
-including hosting a non-team game while waiting for other players. The host
-continues simulating in background tabs. Team readiness checks and lockstep
-requirements still apply.
-
-Quick play starts only when the maps and room are ready. Idle tabs and tabs
-importing a disc image do not participate in host selection.
-
-Everyone in a room is on one network, as on a LAN: up to the game's limits
-of machines and players, split screen on each machine included.
-
-How it works (`site/net.js`, `src/web_net.c`):
-
-- Each copy of the game has an address on the room's network, 10.x.y.z, kept
-  in the browser. The game's sockets put what they send to other addresses
-  in a ring in the shared memory, and take what arrives from another ring.
-- The page carries those packets over WebRTC to each other player: a
-  reliable, ordered data channel for the game's connections and an
-  unreliable one for its datagrams. Broadcasts (system link's discovery) go
-  to every player. The connections are direct between the players; no server
-  carries the game.
-- Players find each other through public MQTT brokers over secure WebSockets
-  (broker.emqx.io, broker.hivemq.com and test.mosquitto.org, all at once), in
-  a topic derived from the room's code. Everything sent there is encrypted
-  (AES-GCM) with a key derived from the code, so only those who have the code
-  can read the room's messages.
-- WebRTC crosses most home networks with STUN (Google's and Cloudflare's
-  public servers). Some networks, mobile carriers' especially, need a TURN
-  relay: *Settings and data* can name one.
-
-Desktop and Android invitations use a separate UDP protocol. Joining those
-hosts requires the [native relay](../../BROWSER_NATIVE_INVITES.md), which is
-not configured on the public sites. Browser rooms do not use that relay.
-
-## How the port operates
-
-### WebAssembly
-
-wasm32 is an ILP32 target: `int`, `long` and pointers have 32 bits, as the
-game's data formats need, and the game runs as it does on the other ports.
-
-- The WebAssembly memory is 0x88000000 bytes and does not grow. Its top
-  128 MB is the Xbox memory window at 0x80000000 (`port/linux/src/platform.h`),
-  so the tag cache and the game state get the fixed addresses of their files.
-  The C heap stays below it (`src/web_main.c`, `emscripten_get_heap_size`).
-- The game and the platform layer are compiled with link-time optimisation.
-  C89 code calls functions declared differently from their definitions,
-  which x86 tolerates and WebAssembly traps on; with the whole program in one
-  module, LLVM gives each such call a wrapper that adapts the arguments.
-- The multivalue ABI (`-target-abi experimental-mv`) passes and returns small
-  structures and unions as values, as Win32 returns them in registers:
-  `hs_runtime.c` calls functions that return unions through pointers typed as
-  returning `long`.
-- `-mnontrapping-fptoint`: a float that does not fit an integer converts as
-  on x86 instead of trapping.
-- Calls whose declarations disagree with the definition in a way LLVM cannot
-  adapt (integer widths, since its wrappers only bitcast), and function
-  pointers called with another signature, are repaired in `#ifdef HALO_WEB`:
-  local prototypes that now match their definitions (`hs.c`, `rasterizer.c`,
-  `ui_widget_event_handler_functions.c` and others), the cache thread's start
-  routine (`cache_files_windows.c`), the stub game engine's callbacks
-  (`game_engine_stub.c`), `weapon_preprocess_node_orientations`, and two
-  globals defined in a header (`object_lists.h`;
-  WebAssembly has no common symbols). An unoptimised link
-  (`-Wl,--lto-O0`) names any call LLVM could not adapt
-  `<function>_bitcast_invalid`.
-
-### Threads and the page
-
-The game runs on a pthread (Emscripten's `PROXY_TO_PTHREAD`), a Web Worker,
-so it can block as a native program does. It never returns to its event loop.
-The page's main thread (`site/app.js`, `site/input.js`) serves it through
-memory both share (`src/web_shared.h`):
-
-- Graphics: the game's WebGL 2 context draws into an OffscreenCanvas of its
-  own thread (`src/web_library.js`). Chrome-family browsers on macOS transfer
-  owned RGBA pixels; other browsers use `transferToImageBitmap`. The page
-  shows the completed frame on its canvas. The page advances a counter each
-  animation frame; the game waits for
-  it after each frame (`display.vsync`).
-- Input: the page writes keyboard, mouse and focus events into a ring that
-  `SDL_PollEvent` reads, and the state of the controllers (Gamepad API, and
-  the touch controls as one more controller).
-- Sound: a thread of the game fills a ring of 48 kHz samples with the mixer of
-  `dsound_sdl.c`; an AudioWorklet (`site/audio-worklet.js`) plays it.
-- Network: split screen is a network game whose host and clients are the
-  same machine. `src/web_net.c` gives the Winsock layer (`port/linux/src/xnet.c`)
-  sockets that reach each other inside the page: datagrams to the loopback,
-  local or a broadcast address go to the socket bound to their port, and
-  stream sockets connect through queues. `HALO_NET_DEBUG=1` logs the traffic.
-- Time: `GetTickCount` and `QueryPerformanceCounter` count from the start, as
-  an Xbox counts from its boot. A browser's monotonic clock counts from 1970,
-  past 2^31 milliseconds, and the network code compares tick counts as
-  signed longs.
-- Files: WasmFS mounts the Origin Private File System at `/data`, the data
-  root (`HALO_DATA_ROOT`); the saved games go to `/data/save`.
-
-`src/web_sdl.c` gives the platform layer the SDL3 functions it calls (the
-Android guest's list, `port/android/guest/runtime/guest_sdl.c`).
-
-### Browser performance and diagnostics
-
-By default, the source worker uses the same append-only stream upload batching as the
-Apollo runner. The shared recorder is embedded in `halo.js`, installed on the
-worker's WebGL context, and flushed before each image is sent to the page.
-This avoids repeatedly updating the large vertex/index rings between draws.
-It adds about 54 MiB of CPU shadow storage for the existing triple-buffer ring;
-shader code, scene resolution, and draw order are unchanged. The source
-renderer already caches render state, so the Apollo state-cache wrappers are
-not installed a second time.
-
-Add `?fps=1` to show actual frames received from the game worker. The HUD keeps
-up to 120 visible measurement windows in its `data-samples` attribute, including
-elapsed time and canvas size; animation callbacks do not count as game frames.
-Hidden time is excluded, while visible stalls count toward the measured FPS.
-Compare `?fps=1&batch_streams=0` to disable batching (or pass
-`--HALO_WEB_BATCH_STREAMS=0` to the runtime). Reload between comparisons.
-`?fps=1&render_height=720` overrides the presentation-height cap for diagnostics
-(480–1440 lines). The default cap is 480 lines on iPhone/iPad and for RGBA
-presentation, and 1440 elsewhere;
-the engine still renders 480 lines, and CSS scales the displayed canvas to the
-screen. At most two frame transfers can await the page's acknowledgement.
-When that queue is full, the worker submits GPU commands without creating
-another bitmap or pixel readback, or blocking simulation. Hidden or failed
-presentations release their frame and acknowledgement too.
-
-`?fps=1&geometry_cache=1` enables an experimental native geometry path (runtime
-argument `--HALO_WEB_GEOMETRY_CACHE=1`) and automatically disables JavaScript
-stream batching. Dynamic vertex/index uploads use separate buffers in three
-rotating frame buckets. Vertex ranges observed unchanged twice are retained;
-exact comparisons of the uploaded bytes, including color conversion, invalidate
-changed data. Streams used by the current draw cannot evict each other. The
-cache is limited to 8 MiB of CPU snapshots and up to 8 MiB of retained GPU data.
-Stream storage has a 32 MiB target and trims old allocations under pressure;
-a single larger draw may exceed that target until subsequent draws can trim it.
-Driver-held copies for in-flight draws are outside this accounting. With
-`--HALO_GPU_STATS=1`, the log reports cache reuse, upload bytes, and stream
-storage/evictions. This path remains opt-in pending browser and device FPS
-measurements.
-
-On September 29, 2026, a local Apple Silicon/Chrome comparison used the
-Silent Cartographer opening and the same 1960 × 1044 presentation size.
-The updated source binary with `batch_streams=0` returned to roughly 2–4 FPS
-in its early opening samples. With batching enabled, two launches measured
-about 46–52 and 48–50 FPS in their first two sampling windows; later beach
-combat in those runs was around 59–79 FPS. The brief Pelican ride reached the
-120 Hz display limit. These are scene-specific local observations, not a
-sustained or physical-iPhone performance guarantee. Each launch reused the
-same assets and saves; rendering remained at the original quality settings.
-Those measurements predate the native geometry cache and presentation changes
-above and do not establish their FPS effect.
-
-Validation covers the DOM-free worker installer, opt-out, explicit flush before
-bitmap transfer, existing upload/readback/VAO/uniform snapshot cases, bounded
-measurement history, hidden intervals, and visible stalls. Run:
-
-```sh
-node tools/test_stream_batch.mjs
-node --test tools/tests/*.test.cjs
-python3 tools/test_web_geometry.py
-```
-
-The native geometry test uses mocked GL storage with AddressSanitizer and
-UndefinedBehaviorSanitizer to check changed-byte invalidation, multistream
-isolation, exact upload sizes, frame rotation, and cache/storage limits.
-
-### WebGL 2
-
-The renderer takes its OpenGL ES 3.0 path (port/android/README.md), with
-these differences for WebGL 2 (`#ifdef HALO_WEB` in `xbox_textures.c` and
-`src/web_host.c`):
-
-- WebGL has no texture swizzle: decoded textures are turned from BGRA to RGBA
-  on the CPU.
-- S3TC textures go to the GPU only as 2D textures whose sides are multiples of
-  four; the others are decoded. iOS has no S3TC: all are decoded.
-- The visibility tests (lens flares) report every sample visible: WebGL gives
-  query results only between tasks, which the game's thread never reaches.
-- Default streamed buffer writes use `glBufferSubData`, which copies. The
-  opt-in geometry cache uses per-upload `glBufferData` and retained buffers;
-  neither path uses GPU fences in the browser.
-- Strides are at most 255 bytes: the immediate mode's vertices (16
-  attributes of 4 floats) go up as one array per attribute.
-
-The Xbox memory cannot be write-protected in WebAssembly. The memory watch
-(`src/web_memory_watch.c`) keeps a hash of each page the renderer caches, and
-a changed hash counts as a write. Textures of 128 KB or less, which the game
-rewrites between draws (the text renderer's character cache), are checked at
-every use; larger ones change through file reads, which announce themselves.
-
-### Cross-origin isolation
-
-SharedArrayBuffer needs the page to be cross-origin isolated
-(`Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy` headers).
-Static hosts such as GitHub Pages cannot send headers, so the service worker
-(`site/sw.js`) adds them. The first visit reloads the page once. The service
-worker also keeps the site for use offline; a new build replaces it as a
-whole when the player accepts the update.
-
-### The game data
-
-`site/xiso-worker.js` reads the XDVDFS file system of the disc image as
-`port/linux/src/xiso.c` does and writes the files of `maps` with the OPFS
-synchronous access handles. It writes `maps/.complete` last; the page starts
-the game only when it is there.
+`version.json` names each build (a hash of the site's files, the build
+number, the commit and the network version). The service worker keeps the
+files of one build together, so that the site starts without the network.
+When a new build is out, the page says so; **Update** downloads it whole and
+reloads.
 
 ## Limits
 
-- The WebAssembly memory needs 2.1 GB of address space. If the browser does
-  not give it, the page says so. Close other apps and tabs.
-- System link is between copies of the web build in one room ("Online
-  play"), not with Xboxes or the other ports on the local network: browsers
-  have no UDP.
-- Bink video is not available. The game skips the movies.
-- Lens flares show through walls (see "WebGL 2").
-- Performance depends on the device. The game draws 480 lines at the shape of
-  the screen and scales them up.
+- No system link with the native builds on a local network (a browser has
+  no UDP): they play over the internet, as invites and the server browser
+  find them ("Playing together"). Split screen works.
+- Internet play has no relay, as on the native builds: two machines whose
+  networks let no direct connection through (some company and school
+  networks block WebRTC) cannot play together.
+- No Custom Edition maps (their tag data's address is in the C heap there).
+- No Bink videos (as on the other ports).
+- The browser's WebGL 2 is OpenGL ES 3.0 without its 3.1 and 3.2 additions:
+  the visibility tests (lens flares) report whether anything was drawn, a
+  frame late; supersampling and SMAA are not offered (FXAA and MSAA are).
+- Performance depends on the browser's graphics: Chrome and Edge are the
+  fastest. A software renderer (no graphics acceleration) is very slow.
 
-## Find problems
+## Building
 
-*Settings and data* > *Show log* shows the page's log and `debug.txt`, the
-game's log, and can copy them for a report. *Log graphics errors* sets
-`debug.gl_debug`. When the game stops, the page shows why.
+Install Emscripten 6.0.10 with [emsdk](https://emscripten.org/docs/getting_started/downloads.html):
+
+```sh
+git clone https://github.com/emscripten-core/emsdk.git ~/emsdk
+~/emsdk/emsdk install 6.0.10
+~/emsdk/emsdk activate 6.0.10
+source ~/emsdk/emsdk_env.sh
+```
+
+Then, in the repository:
+
+```sh
+python configure.py            # finds emcc on the PATH, else ~/emsdk's (--web-emcc PATH)
+ninja web                      # build/web/site/
+python tools/web_serve.py      # http://localhost:8000/
+```
+
+The first build fetches SDL 3.4.16's source and builds it as an Emscripten
+port (`port/web/halo_sdl3.py`, its hash checked), once. `configure.py
+--release` makes the release build (no assertions checked); the debug build
+stops at the first failed assertion, which the page shows with the log.
+
+`tools/web_serve.py` serves the site with the isolation headers, byte ranges
+and no caching; `--as-github-pages` leaves the headers out, so that the
+service worker isolates the page as on GitHub Pages; a folder argument
+serves another site (a `halo-web-*.zip` from a release, say).
+`python tools/ci_build.py web release` makes the site in
+`dist/halo-web-release/`, as CI does.
+
+### Tests
+
+```sh
+node --test "port/web/tests/*.test.js"   # the disc image reader, the service worker
+python -m pytest -q tools/test_web_build.py  # the build's graph, version.json, the sockets, the menus
+node port/web/tests/smoke.mjs dist/halo-web-release  # the site in a headless Chromium (Playwright)
+node port/web/tests/rooms.mjs dist/halo-web-release  # two browsers in a room (and mosquitto)
+node port/web/tests/webrtc_native.mjs chromium firefox  # the native builds' WebRTC with browsers
+node port/web/tests/internet.mjs build/web/site <maps folder>  # internet play with the Linux build
+```
+
+The smoke test serves the site as GitHub Pages does, checks that the page
+isolates itself and passes its checks, and starts the game with an empty
+maps folder, which gets as far as looking for the menus' map. The rooms test
+starts a local broker and two browsers that join one room and connect. A
+game between two browsers needs the maps: two pages of the same build with
+the multiplayer maps imported, one opened with
+`?room=<secret>&set=HALO_NETWORK_TEST=host:bloodgulch` and the other with
+`?room=<secret>&set=HALO_NETWORK_TEST=join` (`debug.network_test`,
+port/linux/NETCODE.md), play one and log every player's state each second.
+
+The WebRTC test builds `port/linux/src/p2p_webrtc.c` (with `posix_dtls.c`
+and Mbed TLS) for this computer around one connection, which a browser's
+data channel opens as signalling would have it; the browser sends it
+messages of every size, which come back, then again with a tenth of the
+datagrams lost each way. The internet play test needs the maps (`ui.map`
+and the multiplayer maps, which each browser imports) and the Linux build
+(`build/linux/halo`), and plays three games through a local broker: two
+browsers by invite, the native build hosting with a browser joining from the
+server browser, and the reverse (`debug.network_test` `browse`,
+`debug.network_test_public`).
+
+Playwright's screenshots of the page in headless Firefox show the game's
+canvas black (it is drawn by a worker); the game draws. Check Firefox headed,
+on a virtual display.
+
+## How it operates
+
+The game is compiled for `wasm32`, an ILP32 target as the Xbox was (32-bit
+`int`, `long` and pointers), with the ABI the other builds reproduce
+(16-bit `wchar_t`, MSVC's extensions, common symbols, no fused
+multiply-adds). `tools/web_build.py` writes the graph.
+
+- **Code paths.** `HALO_WEB` and `HALO_GLES`: the OpenGL ES renderer, and
+  what a browser does differently. Not `HALO_ANDROID`, which is the Android
+  app (its touch overlay, its window, its files): in a browser, the menus,
+  the mouse and the keyboard are the desktop's.
+- **Memory.** The game expects the Xbox's memory window at `0x80000000`
+  (`port/linux/src/platform.h`), 128 MB as on Android. The WebAssembly
+  memory is made `0x88000000` bytes, so that the window is its top 128 MB;
+  `port/web/src/web_main.c` keeps the C heap below it. `xbox_memory.c`
+  clears a block where it would map fresh pages, and only remembers
+  protection.
+- **Threads.** Emscripten's pthreads, with `PROXY_TO_PTHREAD`: the game's
+  `main` runs on a Web Worker, where it may block; the page's own thread only
+  passes events. The game's canvas is moved to that worker
+  (`OFFSCREENCANVASES_TO_PTHREAD`).
+- **Frames.** A worker's canvas shows what was drawn when the worker returns
+  to its event loop, so `main.c` runs one iteration of the game's loop for
+  each of the browser's frames (`emscripten_set_main_loop`) instead of its
+  own `while`. A halt stops the game (`abort`); the page shows the log.
+- **Entry.** `web_main.c` is the program's `main`: it turns the page's
+  `--NAME=value` arguments into environment variables, mounts the site's
+  Origin Private File System at `/data` (WasmFS), and starts the game
+  (`shell_xbox.c`'s `main`, renamed `halo_game_main`).
+- **Calls.** WebAssembly calls a function only as its own type, where x86
+  shrugged. The link fails on a direct call that does not match
+  (`-Wl,--fatal-warnings`); the declarations were corrected. There is no
+  link-time optimisation: LLVM's would turn calls whose parameter types
+  differ only in width, which WebAssembly passes alike, into traps.
+- **WebGL 2.** What the Android renderer needed of ES 3.0 the browser has;
+  the rest:
+  - No texture swizzle: textures are put in RGBA order as they are
+    converted (`xbox_textures.c`).
+  - S3TC only for 2D textures whose sides are multiples of 4: the others
+    are decoded.
+  - A vertex stride of at most 255 bytes: an immediate-mode draw uploads
+    only the registers written since `Begin` (as every build does), and one
+    that writes all sixteen (256 bytes a vertex) is drawn from an array for
+    each attribute (`d3d8_gl.c`).
+  - No feedback loops: a draw that samples the target it draws into samples
+    a copy of it.
+  - No blend of a constant color factor with a constant alpha one (the
+    meters, as the ammo counters on the weapons): the source's factor is
+    applied by the pixel shader instead (`nv2a_pixel_shader_key`'s
+    `source_blend`).
+  - No `glCopyImageSubData`, `glDrawElementsBaseVertex` or
+    `glMemoryBarrier`: the ES renderer's blits and rebased indices. An
+    index array drawn twice the same is kept rebased in a buffer of its own
+    and drawn from there, not uploaded at each draw (`d3d8_gl.c`'s index
+    cache).
+  - Each call into WebGL costs a crossing from WebAssembly into the
+    browser, so draws whose streams all come from the mirror bind a vertex
+    array made for those places once (`d3d8_gl.c`'s vertex array cache),
+    rather than pointing each attribute again. The renderer draws only from
+    buffers, so Emscripten's emulation of client-side arrays (`FULL_ES3`),
+    which wrapped every draw, is not linked.
+  - Buffer writes are copies the browser orders with the draws, so the
+    streaming buffers never wait for the GPU (`port/web/src/web_gl_host.c`).
+- **Memory watch.** WebAssembly cannot protect pages, so the textures'
+  memory is watched by hashing it once a frame, as the Android host does
+  under the x86 emulator (`port/web/src/web_memory_watch.c`,
+  `port/android/host/host_watch_hash.c`). A page that has stayed the same
+  for 30 checks is hashed every 60 frames, until the game locks it or a
+  file is read into it (no other write into such a page was seen in a
+  match).
+- **Sockets.** `port/web/src/web_net.c` gives `posix.h`'s sockets inside
+  the page: one machine with a loopback address and an address of its own
+  network (`10.0.0.1`, or the room's); datagrams to either, or broadcast,
+  reach the sockets bound to their port, and streams connect to the socket
+  listening on theirs. Split screen (a network game over loopback) and the
+  game's own start-up use them.
+- **Internet play.** The native builds' (port/linux/src/p2p*.c), all of it:
+  the invites, the signalling and its sealing, the server browser, the
+  tunnel's sealed packets and KCP streams, the stand-ins the game's sockets
+  reach peers through. Two things differ. A broker is a WebSocket URL, which
+  `posix_resolve_ipv4` gives a stand-in address (198.19.0.x) and a stream
+  socket connected to it is the page's WebSocket (`web_library.js`), the
+  same MQTT bytes. And the tunnel to each peer is a WebRTC data channel
+  (`port/web/src/web_p2p.c`, `site/p2p.js`): the page keeps a connection
+  ready, whose ICE credentials, addresses (IPv4, and its own as mDNS names)
+  and certificate's hash a request or an answer carries, and makes up the
+  other end's description from what signalling told: a native build's is an
+  ICE-lite agent and a DTLS server, whose credentials come from the
+  session's secret; of two browsers, the host is the DTLS server. What the
+  channel receives goes to the tunnel's socket from the connection's stand-in
+  address (198.18.x.y).
+- **Rooms.** The other browsers of a room have addresses of their own in
+  `10.0.0.0/8`, which `net.js` chooses (and the game is started with:
+  `HALO_WEB_ADDRESS`). What the game sends to one, or broadcasts, is a frame
+  `net.js` carries over WebRTC: a datagram on a data channel that may lose it
+  (unordered, not resent), a stream's opening, bytes and end on one that
+  does not. What arrives, `web_net_receive` checks and hands to the sockets.
+  System link and the netcode run unchanged on top, so the network version
+  needs no change for it.
+- **Left out.** The self-updater (the site updates itself), the disc image
+  reader (the page's `xiso-worker.js` is), STUN, UPnP and Discord (a page
+  reaches none: its WebRTC finds its own addresses), and the page-fault
+  memory watch.
+- **The page and the game.** The memory is shared, so the page reads and
+  writes a few words of it itself (`port/web/src/web_shared.h`): the frames
+  shown, whose count standing still while a map loads makes the page say
+  so, and the touch controls' state, which `web_touch.c` hands the game as
+  the Android host does (`touch_input.c`).
+- **SDL.** SDL 3.4.16, the release the other builds use, built as an
+  Emscripten port: windows, input, controllers and audio (an AudioWorklet).
+  Its buffer is SDL's own size, not the desktop's 512 frames, which
+  underran in browsers.
+
+### Game source changes
+
+Each is marked `port:` and guarded by `HALO_WEB` but where it corrects a
+declaration:
+
+- `main/main.c`: one iteration of the main loop per browser frame; a halt
+  stops the game.
+- `cache/cache_files_windows.c`: the cache thread starts at a function of
+  `CreateThread`'s type.
+- `cseries/errors.c`: `debug.txt`'s lines go to the page's log too.
+- `rasterizer/xbox/rasterizer_xbox_text.c`, `rasterizer_xbox_motion_sensor.c`,
+  `rasterizer_xbox_plasma_energy.c`, `networking/network_game_manager.c`,
+  `objects/object_types.c`: declarations given their definitions' types.
+
+## Hosting
+
+`.github/workflows/build.yml` builds the site in the `web` job, puts both
+builds in the release (`halo-web-release.zip`, `halo-web-debug.zip`), and
+the `pages` job deploys the release build to GitHub Pages: only from `main`,
+only once every platform built and the release is out, and never cancelled
+halfway. The Discord post has a Web field and the site's address.
+
+Once, an owner of the organization sets it up:
+
+1. Organization settings → Pages → **Add a verified domain**:
+   `halocombatevolved.com`. Add the TXT record GitHub shows
+   (`_github-pages-challenge-OpenCommunityEdition.halocombatevolved.com`)
+   at the DNS host (Cloudflare) and verify. This also frees the domain from
+   another account's site that still claims it.
+2. Repository settings → Pages → Build and deployment → Source: **GitHub
+   Actions**.
+3. Repository settings → Pages → Custom domain: `halocombatevolved.com`.
+   The DNS records are there already (the four apex `A` records of GitHub
+   Pages, `www` a `CNAME` to the apex), **DNS only** at Cloudflare, so that
+   GitHub can issue its certificate; then tick **Enforce HTTPS**.
+4. Nothing else: the deployment needs no secret, and the `github-pages`
+   environment appears with the first one (give it no required reviewer).
+
+Later, Cloudflare can serve the site (proxied, SSL *Full (strict)*) with a
+response header rule adding `Cross-Origin-Opener-Policy: same-origin`,
+`Cross-Origin-Embedder-Policy: require-corp` and
+`Cross-Origin-Resource-Policy: same-origin`: the first visit then needs no
+reload, and Cloudflare's cache takes GitHub Pages' bandwidth (100 GB a month;
+a first visit downloads about 10 MB, compressed).
+
+## Files
+
+| File | What it is |
+| --- | --- |
+| `tools/web_build.py` | The `ninja web` graph |
+| `port/web/halo_sdl3.py` | SDL 3.4.16 as an Emscripten port |
+| `port/web/src/web_main.c` | The entry point: the page's arguments, the storage, the heap's limit |
+| `port/web/src/web_net.c` | The sockets inside the page, the room's other browsers, and the brokers' WebSockets |
+| `port/web/src/web_p2p.c` | Internet play's WebRTC connections |
+| `port/web/src/web_memory_watch.c` | The memory watch by hashing |
+| `port/web/src/web_gl_host.c` | The renderer's services for WebGL 2 |
+| `port/web/src/web_stubs.c` | UPnP and an MSVC intrinsic |
+| `port/web/src/web_shared.h`, `web_touch.c` | The words of memory the page reads and writes: frames shown, the touch controls' state |
+| `port/web/src/web_library.js`, `web_pre.js` | The JavaScript halves: messages to the page, the brokers' WebSockets, the workers' errors |
+| `port/web/site/` | The page (`index.html`, `app.js`, `style.css`), the touch controls (`touch.js`), rooms (`net.js`), internet play's WebRTC (`p2p.js`), its service worker (`sw.js`), the importer (`xiso-worker.js`), the web app's manifest and icons |
+| `port/web/stamp_version.py`, `licenses.py` | `version.json` and `licenses.txt` |
+| `port/web/tests/` | The tests above |
+| `tools/web_serve.py` | A local server for the site |

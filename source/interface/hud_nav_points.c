@@ -216,6 +216,8 @@ struct hud_nav_object_datum
 static void hud_update_nav_point_local_player(
 	short local_player_index);
 
+/* port: prototypes, so the ARM64 build calls these with the definitions'
+signatures rather than as unprototyped functions */
 void *object_try_and_get_and_verify_type(
 	long object_index,
 	unsigned long valid_type_flags);

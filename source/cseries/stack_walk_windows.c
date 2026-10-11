@@ -344,7 +344,7 @@ void stack_walk_with_context(
 		{
 #ifdef HALO_ARM64_GUEST
 			/* the call site (the BL before the return address), for
-			llvm-symbolizer --obj=build/ios/halo_guest.elf */
+			llvm-symbolizer --obj=build/android/halo_guest.elf */
 			unsigned long routine_address = routine_addresses[frame_number] - 4;
 #else
 			unsigned long routine_address = routine_addresses[frame_number] + *(long *)(routine_addresses[frame_number] - sizeof(long));
@@ -726,7 +726,7 @@ static boolean is_valid_ebp(
 {
 	return 0==(walk_up_current_frame & (sizeof(unsigned long) - 1)) && walk_up_current_frame >= (unsigned long)old_ebp
 #ifdef HALO_IOS
-        /* Stop before crossing from the arena stack into the native caller. */
+        /* port: Stop before crossing from the arena stack into the native caller. */
         && walk_up_current_frame - (unsigned long)old_ebp < 16 * 1024 * 1024
 #endif
         ;
@@ -737,10 +737,6 @@ static unsigned long walk_up(
 {
 	unsigned long routine_address = 0;
 
-#ifdef HALO_WEB
-	/* WebAssembly keeps its return addresses out of reach: no walk */
-	walk_up_current_frame = 0;
-#endif
 	if (walk_up_current_frame)
 	{
 #ifdef HALO_ARM64_GUEST

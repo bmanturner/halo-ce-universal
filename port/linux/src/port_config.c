@@ -47,10 +47,14 @@ enum config_environment
 enum
 {
 	_platform_desktop = 1,
-	_platform_mobile = 2,
-	_platform_all = _platform_desktop | _platform_mobile,
+	_platform_android = 2,
 	/* (of the desktop builds, only Windows) */
 	_platform_windows = 4,
+	/* (the web build, which has the desktop's settings, and these) */
+	_platform_web = 8,
+	/* (the iOS, iPadOS and tvOS apps, which have the touch layout of Android's) */
+	_platform_ios = 16,
+	_platform_all = _platform_desktop | _platform_android | _platform_ios,
 };
 
 struct config_setting
@@ -66,12 +70,20 @@ struct config_setting
 	const char *comment;
 };
 
+/* (on iOS reading the clipboard each time the app comes to the front shows
+the system's paste prompt) */
 #ifdef HALO_IOS
-#define DEFAULT_INTERNET_PLAY "false"
 #define DEFAULT_CLIPBOARD_JOIN "false"
 #else
-#define DEFAULT_INTERNET_PLAY "true"
 #define DEFAULT_CLIPBOARD_JOIN "true"
+#endif
+
+/* crouching's keys (in a browser C alone: a page cannot keep Ctrl+W, Ctrl+S or
+Ctrl+D, which moving and crouching would press, from the browser) */
+#ifdef HALO_WEB
+#define CROUCH_KEYS "\"C\""
+#else
+#define CROUCH_KEYS "\"Left Ctrl, C\""
 #endif
 
 static const struct config_setting config_settings[] =
@@ -99,17 +111,17 @@ static const struct config_setting config_settings[] =
 	{ "display.window_scale", _config_integer, "2", "HALO_WINDOW_SCALE", _environment_value, _platform_desktop,
 		"Where display.window_size is empty: the window's size as a multiple of\n"
 		"640x480." },
-	{ "display.screen_width", _config_integer, "0", "HALO_SCREEN_WIDTH", _environment_value, _platform_mobile,
+	{ "display.screen_width", _config_integer, "0", "HALO_SCREEN_WIDTH", _environment_value, _platform_android | _platform_ios,
 		"Columns of the 480-line picture: 0 for the display's shape, 640 for the\n"
 		"Xbox's 4:3." },
 #ifdef HALO_IOS
-	{ "display.render_height", _config_integer, "0", "HALO_RENDER_HEIGHT", _environment_value, _platform_mobile,
+	{ "display.render_height", _config_integer, "0", "HALO_RENDER_HEIGHT", _environment_value, _platform_ios,
 		"Internal rendering height in physical pixels: 0 (default) uses native\n"
 		"display resolution; lower heights (1440, 1200, 1080, 900, 720) draw\n"
 		"fewer pixels and are upscaled to the display. The selected aspect ratio\n"
 		"is preserved; changes apply on relaunch. With MetalFX upscaling on, the\n"
 		"picture is upscaled from this height, and from 720 when this is 0." },
-	{ "display.frame_rate", _config_integer, "0", "HALO_FRAME_RATE", _environment_value, _platform_mobile,
+	{ "display.frame_rate", _config_integer, "0", "HALO_FRAME_RATE", _environment_value, _platform_ios,
 		"0 for a frame each display refresh (Smooth Motion); 30 for the Xbox's 30\n"
 		"a second, not blended; above 30 (60) for Smooth Motion held to at most\n"
 		"that many a second. On the iPad this replaces display.interpolation." },
@@ -221,17 +233,15 @@ static const struct config_setting config_settings[] =
 		"loose_sounds_reload reads the files again and loose_sounds false gives\n"
 		"the map's sounds back." },
 
-#ifdef HALO_ANDROID
-	{ "input.touch_controls", _config_string, "\"auto\"", "HALO_TOUCH_CONTROLS", _environment_value, _platform_mobile,
+	{ "input.touch_controls", _config_string, "\"auto\"", "HALO_TOUCH_CONTROLS", _environment_value, _platform_android | _platform_web,
 		"The on-screen touch controls in a game: \"auto\" shows them on a\n"
 		"touchscreen while no controller is connected, \"on\" also with a\n"
 		"controller, \"off\" never. A device without a touchscreen never shows\n"
 		"them. The menus take taps in any case." },
-	{ "input.touch_aim_assist", _config_boolean, "true", "HALO_TOUCH_AIM_ASSIST", _environment_value, _platform_mobile,
+	{ "input.touch_aim_assist", _config_boolean, "true", "HALO_TOUCH_AIM_ASSIST", _environment_value, _platform_android | _platform_web,
 		"The touch controls' swipe aiming gets a controller's aim assist: the\n"
 		"aim slows over a target and follows a moving one. false: none, as a\n"
 		"mouse (the bullets' own autoaim stays)." },
-#endif
 	{ "input.mouse_sensitivity", _config_real, "0.1", "HALO_MOUSE_SENSITIVITY", _environment_value, _platform_desktop,
 		"Mouse turn multiplier. The menu shows 1-100 (value squared / 4000);\n"
 		"the default 0.1 is 20/100." },
@@ -262,7 +272,7 @@ static const struct config_setting config_settings[] =
 		"Moving right." },
 	{ "controls.jump", _config_string, "\"Space\"", "HALO_KEY_JUMP", _environment_value, _platform_all,
 		"Jumping (and skipping cutscenes)." },
-	{ "controls.crouch", _config_string, "\"Left Ctrl, C\"", "HALO_KEY_CROUCH", _environment_value, _platform_all,
+	{ "controls.crouch", _config_string, CROUCH_KEYS, "HALO_KEY_CROUCH", _environment_value, _platform_all,
 		"Crouching." },
 	{ "controls.fire", _config_string, "\"Mouse Left\"", "HALO_KEY_FIRE", _environment_value, _platform_all,
 		"Firing." },
@@ -318,6 +328,23 @@ static const struct config_setting config_settings[] =
 		"as CUSTOM SINGLEPLAYER and CUSTOM MULTIPLAYER. Their tags are checked\n"
 		"as the game's own maps' are before they run; false refuses them\n"
 		"(docs/custom_edition_caches.md)." },
+	{ "display.viewmodel_shield", _config_boolean, "false", "HALO_VIEWMODEL_SHIELD", _environment_value, _platform_all,
+		"The energy shield's flare on the first-person arms too, as on the body\n"
+		"(the stock game draws it on the body only)." },
+	{ "display.first_person_legs", _config_boolean, "false", "HALO_FIRST_PERSON_LEGS", _environment_value, _platform_all,
+		"Your own legs in first person, seen looking down: your body as others\n"
+		"see it, drawn from the waist down, moving as it moves." },
+	{ "display.shield_glow", _config_boolean, "false", "HALO_SHIELD_GLOW", _environment_value, _platform_all,
+		"Energy shields light what is around them as they flare, as plasma\n"
+		"does, in the shield's own color." },
+	{ "display.shield_glow_intensity", _config_string, "\"default\"", "HALO_SHIELD_GLOW_INTENSITY", _environment_value, _platform_all,
+		"How far the shield glow reaches: \"default\" or \"light_show\" (three\n"
+		"times as far, and at full strength from a third of the flare)." },
+	{ "display.shield_color", _config_string, "\"default\"", "HALO_SHIELD_COLOR", _environment_value, _platform_all,
+		"Your energy shield's color, as this machine draws it: \"default\" (the\n"
+		"shield's own) or a multiplayer armor color: white, black, red, blue,\n"
+		"gray, yellow, green, pink, purple, cyan, cobalt, orange, teal, sage,\n"
+		"brown, tan, maroon or salmon." },
 
 	{ "paths.data", _config_string, "\"\"", "HALO_DATA_ROOT", _environment_value, _platform_desktop,
 		"The folder holding the game data's maps folder; empty looks in the\n"
@@ -338,18 +365,11 @@ static const struct config_setting config_settings[] =
 	{ "network.address", _config_string, "\"\"", "HALO_NET_ADDRESS", _environment_value, _platform_all,
 		"This machine's IPv4 address for system link, for a machine on several\n"
 		"networks; empty chooses one." },
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-	{ "network.quick_play", _config_string, "\"\"", "HALO_QUICK_PLAY", _environment_value, _platform_all,
-		"Browser quick play: host starts Beaver Creek Slayer; join finds the chosen host.\n"
-		"Empty keeps the normal game menus. This runs only once per launch." },
-	{ "network.quick_play_target", _config_string, "\"\"", "HALO_QUICK_PLAY_TARGET", _environment_value, _platform_all,
-		"Optional IPv4 address of the quick-play host; empty joins the first open game." },
-#endif
 	{ "network.broadcast", _config_string, "\"\"", "HALO_NET_BROADCAST", _environment_value, _platform_all,
 		"Comma-separated IPv4 addresses system link sends its announcements to\n"
 		"instead of the local network's broadcast address (for VPNs); empty for\n"
 		"the local network." },
-	{ "network.online", _config_boolean, DEFAULT_INTERNET_PLAY, "HALO_NET_ONLINE", _environment_value, _platform_all,
+	{ "network.online", _config_boolean, "true", "HALO_NET_ONLINE", _environment_value, _platform_all,
 		"Internet play: hosting makes an invite link (logged, and put on the\n"
 		"clipboard) that lets whoever has it join over the internet; opening a\n"
 		"link (or copying one before switching to the game) joins. Only people\n"
@@ -462,8 +482,9 @@ static const struct config_setting config_settings[] =
 
 	{ "debug.network_test", _config_string, "\"\"", "HALO_NETWORK_TEST", _environment_value, _platform_all,
 		"Automated system link sessions for testing (port/linux/game/network_test.c):\n"
-		"\"host:<map>\" hosts a game on that map, \"join\" joins the first game found;\n"
-		"empty for none." },
+		"\"host:<map>\" hosts a game on that map, \"join\" joins the first game found,\n"
+		"\"browse\" the one with the most players the server browser lists (not\n"
+		"co-op, if it can); empty for none." },
 	{ "debug.network_test_start", _config_real, "15.0", "HALO_NETWORK_TEST_START", _environment_value, _platform_all,
 		"Seconds after hosting that an automated test game starts." },
 	{ "debug.network_test_kill", _config_real, "0.0", "HALO_NETWORK_TEST_KILL", _environment_value, _platform_all,
@@ -485,6 +506,10 @@ static const struct config_setting config_settings[] =
 		_platform_all,
 		"The weapon network_test_pickup stands the player on: the first whose tag\n"
 		"name has this in it (\"sniper\", say); empty any." },
+	{ "debug.network_test_public", _config_boolean, "false", "HALO_NETWORK_TEST_PUBLIC", _environment_value,
+		_platform_all,
+		"The network test's host lists its game in the server browser, as Create\n"
+		"Game > Internet's PUBLIC does (debug.network_test \"browse\" joins it)." },
 	{ "debug.telnet_console", _config_boolean, "false", "HALO_TELNET_CONSOLE", _environment_set_is_true, _platform_all,
 		"Listen on 127.0.0.1 (port telnet_console_port) for a script console that\n"
 		"runs what it is sent as the game's console does, with no password; false\n"
@@ -566,10 +591,10 @@ static const struct config_setting config_settings[] =
 		"Log texture uploads." },
 	{ "debug.texture_no_cache", _config_boolean, "false", "HALO_TEXTURE_NO_CACHE", _environment_set_is_true, _platform_all,
 		"Upload textures again every time they are used." },
-	{ "debug.sample_seconds", _config_real, "0.0", "HALO_SAMPLE", _environment_value, _platform_mobile,
+	{ "debug.sample_seconds", _config_real, "0.0", "HALO_SAMPLE", _environment_value, _platform_android | _platform_ios,
 		"Log where every game thread is this often, in seconds (read by the\n"
 		"app, port/android/host/host_debug.c); 0 never." },
-	{ "debug.memory_watch", _config_boolean, "true", NULL, _environment_value, _platform_mobile,
+	{ "debug.memory_watch", _config_boolean, "true", NULL, _environment_value, _platform_android | _platform_ios,
 		"Notice the game's writes to cached textures and vertices by page\n"
 		"protection; false compares page contents once a frame instead, which is\n"
 		"slower. Under ARM translation (the x86 emulator) the app always compares\n"
@@ -593,8 +618,12 @@ static const struct config_setting config_settings[] =
 
 #define NUMBER_OF_CONFIG_SETTINGS (sizeof(config_settings) / sizeof(config_settings[0]))
 
-#if defined(HALO_ANDROID) || defined(HALO_IOS)
-#define CONFIG_PLATFORM _platform_mobile
+#ifdef HALO_ANDROID
+#define CONFIG_PLATFORM _platform_android
+#elif defined(HALO_IOS)
+#define CONFIG_PLATFORM _platform_ios
+#elif defined(HALO_WEB)
+#define CONFIG_PLATFORM (_platform_desktop | _platform_web)
 #elif defined(_WIN32)
 #define CONFIG_PLATFORM (_platform_desktop | _platform_windows)
 #else
@@ -617,8 +646,9 @@ static pthread_mutex_t config_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static void config_path(char *path, size_t size)
 {
-#if defined(HALO_ANDROID) || defined(HALO_IOS)
-	/* the data folder, which the app names (port/ios/host/host_main.m) */
+#if defined(HALO_ANDROID) || defined(HALO_IOS) || defined(HALO_WEB)
+	/* the data folder, which the app names (port/android/host/host_main.c,
+	port/ios/host/host_main.m; on the web, port/web/src/web_main.c) */
 	const char *root = getenv("HALO_CONFIG_ROOT");
 	if (!root || !*root) root = getenv("HALO_DATA_ROOT");
 	snprintf(path, size, "%s/config.toml", root && *root ? root : ".");
@@ -746,7 +776,7 @@ static void config_append_setting(struct config_text *text, const struct config_
 			line++;
 	}
 #if !defined(HALO_ANDROID) && !defined(HALO_IOS)
-	/* (iOS apps have no environment to set) */
+	/* (Android and iOS apps have no environment to set) */
 	switch (setting->environment_style)
 	{
 	case _environment_value:

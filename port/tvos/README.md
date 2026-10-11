@@ -146,9 +146,7 @@ app (SDL's controller UI events hint is off); use the TV/Home button.
 | Render height | 1080 by default (`HaloRenderHeight` in `port/tvos/Info.plist`); the Video Settings row still changes it |
 | Display mode | The game draws standard dynamic range and asks tvOS for that mode (`AVDisplayManager.preferredDisplayCriteria`, `host_platform.m`). With Settings > Video and Audio > Match Content > Match Dynamic Range on, the TV switches to SDR while the game is in front, which lets TVs that refuse their game mode in HDR use it, and back for the Home screen and other apps; HDR video elsewhere still plays in HDR. The request names the refresh rate the TV has at launch (the Format setting's), so Match Frame Rate leaves it unchanged, and the game's Frame Rate setting (30 Classic, 60, Display) paces frames within it. Without Match Content tvOS ignores the request and keeps the Format setting's mode. The log says `display: asked for SDR at 60 Hz, the current refresh rate (Match Content on)`, or `off` |
 | Game data | Built into the app, not imported |
-| Not available | Browser rooms (WebKit), touch controls, ISO import, Files access, joining from a clipboard invite (UIPasteboard), voice chat microphone (you can listen only), the iOS debug settings sheet |
-
-Browser rooms report as unavailable.
+| Not available | Touch controls, ISO import, Files access, joining from a clipboard invite (UIPasteboard), voice chat microphone (you can listen only), the iOS debug settings sheet |
 
 ## Diagnostics
 
@@ -187,7 +185,7 @@ xcrun devicectl device copy from --device DEVICE --domain-type appDataContainer 
 | --- | --- |
 | `port/tvos/CMakeLists.txt` | The Xcode project for the app |
 | `port/tvos/Info.plist`, `port/tvos/Entitlements.plist` | The app's properties and entitlements |
-| `port/tvos/host_platform.m` | The tvOS hooks: no on-screen controls, controllers pass straight through SDL with the tap latch, the SDR display request, browser rooms report unavailable, the game data setup (`paths.maps`, the writable folder in Caches) |
+| `port/tvos/host_platform.m` | The tvOS hooks: no on-screen controls, controllers pass straight through SDL with the tap latch, the SDR display request, the game data setup (`paths.maps`, the writable folder in Caches) |
 | `port/tvos/host_cloud_saves.m` | The CloudKit mirror |
 | `port/tvos/tvos_host.h` | The header the two host files share |
 | `port/tvos/Assets.xcassets` | The brand assets (the icon in three depth layers, Front, Middle and Back, and the top shelf images), made by `tools/tvos_icon.py` from `port/apple/RingArtwork.png` |

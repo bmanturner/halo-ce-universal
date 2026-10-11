@@ -272,10 +272,6 @@ int host_sdl_poll_event(void *event)
 {
 	SDL_Event host_event;
     test_menu_input();
-
-	#ifdef HALO_IOS_BROWSER_HOST
-    { extern void host_ios_room_tick(void); host_ios_room_tick(); }
-#endif
     if (!SDL_PollEvent(&host_event))
 		return 0;
 	/* the layouts agree except for the pointers of text, drop and user

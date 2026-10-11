@@ -1,60 +1,48 @@
 /*
 WEB_MEMORY_WATCH.C
 
-Write tracking for guest memory that the renderer caches
-(port/linux/src/memory_watch.c's interface).
+Write tracking for the memory the renderer caches
+(port/linux/src/memory_watch.c's interface), for the web build.
 
-WebAssembly memory has no page protection, so a write cannot fault. A
-watched page instead remembers a hash of its contents: asking for its
-generation hashes it again, and a different hash counts as a write, as the
-fault would have. Writes the file layer announces (memory_watch_prepare_write)
-count at once. The renderer only asks about the pages its draws read, so
-the pages hashed each frame are about the ones the GPU reads anyway.
+WebAssembly has no page protection, so a write cannot fault: a watched
+page's contents are hashed instead, and hashed again when the renderer asks
+for its generation, at most once a frame, a different hash counting as a
+write. The hashing is the Android host's for the x86 emulator, which cannot
+catch its faults either (port/android/host/host_watch_hash.c); a write is
+seen in the next frame, not at once. Pages that have long stayed the same
+are hashed only every few frames, unless a write into them is announced
+(memory_watch_prepare_write: the file layer's reads, the Direct3D locks).
 */
 
 #include "platform.h"
+#include "host_watch_hash.h"
 
-#include <stdint.h>
-#include <string.h>
+#define WATCH_PAGE_COUNT (PLATFORM_CONTIGUOUS_SIZE / WATCH_HASH_PAGE_SIZE)
 
-#define WATCH_PAGE_SIZE 0x1000UL
-#define WATCH_PAGE_COUNT (PLATFORM_CONTIGUOUS_SIZE / WATCH_PAGE_SIZE)
-
-static unsigned char page_protected[WATCH_PAGE_COUNT];
-static unsigned long page_generation[WATCH_PAGE_COUNT];
+static uint8_t page_watched[WATCH_PAGE_COUNT];
 static uint64_t page_hash[WATCH_PAGE_COUNT];
-static volatile unsigned long current_generation = 1;
+static uint32_t page_hashed_frame[WATCH_PAGE_COUNT];
+static uint32_t page_generation[WATCH_PAGE_COUNT];
+static uint8_t page_unchanged[WATCH_PAGE_COUNT];
+static volatile uint32_t current_generation = 1;
+static pthread_mutex_t watch_lock = PTHREAD_MUTEX_INITIALIZER;
 
-static unsigned long page_index(unsigned long address)
+static struct watch_hash watch =
 {
-	return (address - PLATFORM_CONTIGUOUS_BASE) / WATCH_PAGE_SIZE;
-}
+	(const uint8_t *)PLATFORM_CONTIGUOUS_BASE,
+	WATCH_PAGE_COUNT,
+	page_watched,
+	page_hash,
+	page_hashed_frame,
+	page_generation,
+	&current_generation,
+	1,
+	page_unchanged,
+};
 
-static uint64_t hash_page(unsigned long page)
-{
-	const uint64_t *words = (const uint64_t *)(PLATFORM_CONTIGUOUS_BASE + page * WATCH_PAGE_SIZE);
-	uint64_t a = 0x9e3779b97f4a7c15ULL, b = 0xc2b2ae3d27d4eb4fULL;
-	uint64_t c = 0x165667b19e3779f9ULL, d = 0x27d4eb2f165667c5ULL;
-	unsigned long index;
-
-	/* four independent lanes, so the loop vectorises */
-	for (index = 0; index < WATCH_PAGE_SIZE / sizeof(uint64_t); index += 4)
-	{
-		a = (a ^ words[index + 0]) * 0x100000001b3ULL;
-		b = (b ^ words[index + 1]) * 0x100000001b3ULL;
-		c = (c ^ words[index + 2]) * 0x100000001b3ULL;
-		d = (d ^ words[index + 3]) * 0x100000001b3ULL;
-	}
-	return a ^ (b << 1 | b >> 63) ^ (c << 7 | c >> 57) ^ (d << 13 | d >> 51);
-}
-
-static void mark_written(unsigned long page)
-{
-	page_generation[page] = __sync_add_and_fetch(&current_generation, 1);
-	page_protected[page] = 0;
-}
-
-static BOOL page_range(unsigned long address, unsigned long size, unsigned long *first, unsigned long *last)
+/* the pages of a range of the window, first to last; FALSE if it is not in
+the window */
+static BOOL watch_pages(unsigned long address, unsigned long size, uint32_t *first, uint32_t *last)
 {
 	unsigned long start = address, end = address + size;
 
@@ -62,10 +50,8 @@ static BOOL page_range(unsigned long address, unsigned long size, unsigned long 
 		return FALSE;
 	if (start < PLATFORM_CONTIGUOUS_BASE)
 		start = PLATFORM_CONTIGUOUS_BASE;
-	if (end > PLATFORM_CONTIGUOUS_BASE + PLATFORM_CONTIGUOUS_SIZE)
-		end = PLATFORM_CONTIGUOUS_BASE + PLATFORM_CONTIGUOUS_SIZE;
-	*first = page_index(start);
-	*last = page_index(end - 1);
+	*first = (uint32_t)((start - PLATFORM_CONTIGUOUS_BASE) / WATCH_HASH_PAGE_SIZE);
+	*last = (uint32_t)((end - 1 - PLATFORM_CONTIGUOUS_BASE) / WATCH_HASH_PAGE_SIZE);
 	return TRUE;
 }
 
@@ -75,34 +61,25 @@ void memory_watch_initialize(void)
 
 void memory_watch_protect(unsigned long address, unsigned long size)
 {
-	unsigned long first, last, page;
+	uint32_t first, last;
 
-	if (!page_range(address, size, &first, &last))
+	if (!watch_pages(address, size, &first, &last))
 		return;
-	for (page = first; page <= last; page++)
-	{
-		if (!page_protected[page])
-		{
-			page_hash[page] = hash_page(page);
-			page_protected[page] = 1;
-		}
-	}
+	pthread_mutex_lock(&watch_lock);
+	watch_hash_protect(&watch, first, last);
+	pthread_mutex_unlock(&watch_lock);
 }
 
 unsigned long memory_watch_generation(unsigned long address, unsigned long size)
 {
-	unsigned long first, last, page, newest = 0;
+	uint32_t first, last, generation;
 
-	if (!page_range(address, size, &first, &last))
+	if (!watch_pages(address, size, &first, &last))
 		return 0;
-	for (page = first; page <= last; page++)
-	{
-		if (page_protected[page] && hash_page(page) != page_hash[page])
-			mark_written(page);
-		if (page_generation[page] > newest)
-			newest = page_generation[page];
-	}
-	return newest;
+	pthread_mutex_lock(&watch_lock);
+	generation = watch_hash_generation(&watch, first, last);
+	pthread_mutex_unlock(&watch_lock);
+	return generation;
 }
 
 unsigned long memory_watch_serial(void)
@@ -112,32 +89,29 @@ unsigned long memory_watch_serial(void)
 
 void memory_watch_prepare_write(void *address, unsigned long size)
 {
-	unsigned long first, last, page;
+	uint32_t first, last;
 
-	if (!page_range((unsigned long)address, size, &first, &last))
+	if (!watch_pages((unsigned long)address, size, &first, &last))
 		return;
-	for (page = first; page <= last; page++)
-	{
-		if (page_protected[page])
-			mark_written(page);
-	}
+	pthread_mutex_lock(&watch_lock);
+	watch_hash_prepare_write(&watch, first, last);
+	pthread_mutex_unlock(&watch_lock);
 }
 
 void memory_watch_forget(void *address, unsigned long size)
 {
-	unsigned long first, last, page;
+	uint32_t first, last;
 
-	if (!page_range((unsigned long)address, size, &first, &last))
+	if (!watch_pages((unsigned long)address, size, &first, &last))
 		return;
-	for (page = first; page <= last; page++)
-	{
-		page_protected[page] = 0;
-		page_generation[page] = __sync_add_and_fetch(&current_generation, 1);
-	}
+	pthread_mutex_lock(&watch_lock);
+	watch_hash_forget(&watch, first, last);
+	pthread_mutex_unlock(&watch_lock);
 }
 
-/* (pages are hashed again whenever their generation is asked for, not once
-a frame: nothing to do as a frame starts) */
 void memory_watch_begin_frame(void)
 {
+	pthread_mutex_lock(&watch_lock);
+	watch_hash_begin_frame(&watch);
+	pthread_mutex_unlock(&watch_lock);
 }

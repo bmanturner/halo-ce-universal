@@ -77,8 +77,6 @@ with the host ABI.
 #define WINSOCK_SO_ERROR 0x1007
 #define WINSOCK_SO_TYPE 0x1008
 
-#ifndef HALO_WEB
-/* (the web build's sockets are port/web/src/web_net.c) */
 static __thread int last_error;
 
 static int fail(void)
@@ -473,7 +471,7 @@ posix_ulong posix_local_ipv4_address(void)
 	posix_ulong result = 0;
 	int probe;
 
-#if defined(__ANDROID__) || defined(HALO_IOS) || defined(HALO_WEB)
+#if defined(__ANDROID__) || defined(HALO_IOS)
 	/* a phone's default route may be its mobile data (on Wi-Fi without the
 	internet, or sharing its connection), which the local network cannot
 	reach: first the local network's interface (Wi-Fi, or the one it
@@ -503,7 +501,6 @@ posix_ulong posix_local_ipv4_address(void)
 	that is up, running and not loopback */
 	return result ? result : interface_address(0);
 }
-#endif
 
 void posix_random_bytes(void *buffer, posix_ulong size)
 {
@@ -547,7 +544,6 @@ void posix_random_bytes(void *buffer, posix_ulong size)
 	}
 }
 
-#ifndef HALO_WEB
 posix_ulong posix_resolve_ipv4(const char *host)
 {
 	struct addrinfo hints, *results;
@@ -564,13 +560,11 @@ posix_ulong posix_resolve_ipv4(const char *host)
 	return address;
 }
 
-#endif
-
 /* ---------- the process and the desktop */
 
 int posix_command_line_argument(int index, char *buffer, posix_ulong size)
 {
-#if defined(__ANDROID__) || defined(HALO_IOS) || defined(HALO_WEB)
+#if defined(__ANDROID__) || defined(HALO_IOS)
 	(void)index;
 	(void)buffer;
 	(void)size;
@@ -607,7 +601,7 @@ posix_ulong posix_process_id(void)
 
 int posix_user_secret(unsigned char *secret, int size)
 {
-#if defined(__ANDROID__) || defined(HALO_IOS) || defined(HALO_WEB)
+#if defined(__ANDROID__) || defined(HALO_IOS)
 	(void)secret;
 	(void)size;
 	return 0;
@@ -666,7 +660,7 @@ int posix_user_secret(unsigned char *secret, int size)
 #endif
 }
 
-#if !defined(__ANDROID__) && !defined(HALO_IOS) && !defined(HALO_WEB)
+#if !defined(__ANDROID__) && !defined(HALO_IOS)
 /* runs a program with its arguments and waits for it; its exit status, or -1 */
 static int run_program(char *const arguments[])
 {
@@ -684,7 +678,7 @@ static int run_program(char *const arguments[])
 
 int posix_register_url_scheme(const char *scheme, const char *description)
 {
-#if defined(__ANDROID__) || defined(HALO_IOS) || defined(HALO_WEB)
+#if defined(__ANDROID__) || defined(HALO_IOS)
 	(void)scheme;
 	(void)description;
 	return 0;
@@ -748,7 +742,7 @@ int posix_register_url_scheme(const char *scheme, const char *description)
 
 int posix_discord_connect(void)
 {
-#if defined(__ANDROID__) || defined(HALO_IOS) || defined(HALO_WEB)
+#if defined(__ANDROID__) || defined(HALO_IOS)
 	return -1;
 #else
 	/* where Discord (and its Flatpak and Snap packages) put discord-ipc-N */

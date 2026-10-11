@@ -25,11 +25,10 @@ add_executable(HaloCE MACOSX_BUNDLE
     host_platform.m host_cloud_saves.m Assets.xcassets
     "${ROOT}/port/runtime/xiso.c"
     ../ios/host/host_main.m ../ios/host/host_memory.c ../ios/host/host_loader.c ../ios/host/host_syscall.c ../ios/host/host_gl.c ../ios/host/host_debug.m ../ios/host/host_metalfx.m ../ios/host/host_graphics.m ../ios/host/host_shader_cache.m ../ios/host/guest_call.S
-    ../ios/host/host_thread.c ../ios/host/host_sdl.c ../ios/network/room_bridge.c
-    "${ROOT}/port/ios/network/host_web_net.c" "${ROOT}/port/ios/network/host_net.c" "${ROOT}/port/ios/network/host_browser.m"
+    ../ios/host/host_thread.c ../ios/host/host_sdl.c
     "${ROOT}/port/linux/src/posix_files.c" ../ios/host/posix_net.c
     "${ROOT}/build/ios/host/bridges.c" "${ROOT}/build/ios/embedded/guest_image.S")
-target_include_directories(HaloCE PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" ../ios/host ../ios/network "${ROOT}/port/web/src" "${ROOT}/port/runtime" "${ROOT}/port/runtime/include"
+target_include_directories(HaloCE PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" ../ios/host "${ROOT}/port/runtime" "${ROOT}/port/runtime/include"
     "${ROOT}/port/runtime/guest/runtime" "${ROOT}/port/linux/src" "${ROOT}/build/ios/host"
     "${ROOT}/build/ios/gl_include" "${ROOT}/build/ios/embedded")
 target_compile_definitions(HaloCE PRIVATE HALO_IOS=1 st_mtim=st_mtimespec st_atim=st_atimespec st_ctim=st_ctimespec)
@@ -55,6 +54,7 @@ endif()
 if(HALO_ICLOUD_CONTAINER)
     set_target_properties(HaloCE PROPERTIES XCODE_ATTRIBUTE_CODE_SIGN_ENTITLEMENTS "${CMAKE_CURRENT_SOURCE_DIR}/Entitlements.plist")
 endif()
+include("${ROOT}/port/apple/dtls.cmake")
 
 execute_process(COMMAND git describe --always --dirty WORKING_DIRECTORY "${ROOT}"
     OUTPUT_VARIABLE HALO_BUILD_REVISION OUTPUT_STRIP_TRAILING_WHITESPACE)

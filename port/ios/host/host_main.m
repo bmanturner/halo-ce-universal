@@ -1,4 +1,3 @@
-#include "../network/network_mode.h"
 #include "host_graphics.h"
 #include "host_debug.h"
 /* Start the statically compiled guest on the iOS UI thread and persist its log. */
@@ -15,7 +14,6 @@
 #if TARGET_OS_TV
 #include "tvos_host.h"
 #endif
-#include "../network/room_bridge.h"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <errno.h>
@@ -111,7 +109,6 @@ int main(int argc,char **argv) {
         host_ios_touch_initialize();
         halo_graphics_initialize();
         halo_debug_initialize();
-        host_ios_room_prepare();
         const SDL_DisplayMode *mode=SDL_GetDesktopDisplayMode(SDL_GetPrimaryDisplay());
         int width=640,pixel_width=640,pixel_height=480;
         if(mode && mode->w && mode->h){
@@ -147,14 +144,8 @@ int main(int argc,char **argv) {
 #if HALO_MACOS
         env[env_count++]="HALO_DESKTOP_INPUT=1";
 #endif
-#if TARGET_OS_TV
-        halo_browser_rooms=0; /* no WebKit */
-#else
-        halo_browser_rooms=[NSUserDefaults.standardUserDefaults boolForKey:@"HaloBrowserRooms"];
-        if([NSProcessInfo.processInfo.environment[@"HALO_IOS_TEST_ROOM"] length])halo_browser_rooms=1;
-#endif
-        env[env_count++]=halo_browser_rooms?"HALO_NET_ONLINE=0":"HALO_NET_ONLINE=1";
-        host_logf(HOST_LOG_INFO,"Multiplayer transport: %s",halo_browser_rooms?"WebRTC rooms":"native public servers");
+        /* Internet play is always on in the Apple apps; config.toml files written by earlier versions say `network.online = false`. */
+        env[env_count++]="HALO_NET_ONLINE=1";
         /* Explicit launch-only diagnostics, never persisted to a user's settings. */
         static const struct {const char *name,*label;} diagnostics[]={
             {"HALO_MENU_OPEN","Test menu"},{"HALO_EXIT_AFTER","Test exit after"},

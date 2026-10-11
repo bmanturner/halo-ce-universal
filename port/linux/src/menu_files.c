@@ -387,9 +387,24 @@ static long current_line(struct reader *reader)
 	return (long)XML_GetCurrentLineNumber(reader->parser);
 }
 
-/* whether the element is for this platform (its platform attribute): "ios"
-is the touch layout of iOS alone, for what only its config has; "!ios" is
-everywhere else */
+/* this build's platform, as the platform attribute names it ("ios" is the
+touch layout of iOS, iPadOS and tvOS; the Mac app, which has a mouse and
+keyboard, has the desktop's) */
+static const char *menu_platform(void)
+{
+#if defined(HALO_ANDROID)
+	return "android";
+#elif defined(HALO_WEB)
+	return "web";
+#elif defined(HALO_IOS)
+	return getenv("HALO_DESKTOP_INPUT") ? "desktop" : "ios";
+#else
+	return "desktop";
+#endif
+}
+
+/* whether the element is for this platform (its platform attribute: the
+platforms it is for, separated by spaces) */
 static int for_this_platform(struct reader *reader, const XML_Char **attributes)
 {
 	int index;
@@ -398,29 +413,30 @@ static int for_this_platform(struct reader *reader, const XML_Char **attributes)
 	{
 		if (!strcmp(attributes[index], "platform"))
 		{
-			const char *platform = attributes[index + 1];
+			const char *name = attributes[index + 1];
+			int found = 0;
 
-			if (strcmp(platform, "desktop") && strcmp(platform, "android") && strcmp(platform, "ios") &&
-				strcmp(platform, "!ios"))
+			while (*name)
 			{
-				reader_error(reader, "platform=\"%s\" is not \"desktop\", \"android\", \"ios\" or \"!ios\"", platform);
-				return 1;
+				size_t length = strcspn(name, " ");
+
+				if (length)
+				{
+					if ((length != 7 || strncmp(name, "desktop", 7)) && (length != 7 || strncmp(name, "android", 7)) &&
+						(length != 3 || strncmp(name, "web", 3)) && (length != 3 || strncmp(name, "ios", 3)))
+					{
+						reader_error(reader, "platform=\"%s\" names one that is not desktop, android, web or ios",
+							attributes[index + 1]);
+						return 1;
+					}
+					if (length == strlen(menu_platform()) && !strncmp(name, menu_platform(), length))
+						found = 1;
+				}
+				name += length;
+				while (*name == ' ')
+					name++;
 			}
-			if (!strcmp(platform, "!ios"))
-#ifdef HALO_IOS
-				return getenv("HALO_DESKTOP_INPUT") != NULL;
-#else
-				return 1;
-#endif
-#ifdef HALO_IOS
-			if (!strcmp(platform, "ios"))
-				return !getenv("HALO_DESKTOP_INPUT");
-			return !strcmp(platform, getenv("HALO_DESKTOP_INPUT") ? "desktop" : "android");
-#elif defined(HALO_ANDROID)
-			return !strcmp(platform, "android");
-#else
-			return !strcmp(platform, "desktop");
-#endif
+			return found;
 		}
 	}
 	return 1;
@@ -1050,7 +1066,10 @@ void halo_menus_art_register(void const *texture, char const *png)
 	{
 		free(art[index].png);
 		if (art[index].texture)
+		{
+			xgpu_gl_texture_deleted(art[index].texture);
 			glDeleteTextures(1, &art[index].texture);
+		}
 	}
 	memset(&art[index], 0, sizeof(art[index]));
 	art[index].data = data;
@@ -1065,7 +1084,10 @@ void halo_menus_art_forget(void)
 	{
 		free(art[index].png);
 		if (art[index].texture)
+		{
+			xgpu_gl_texture_deleted(art[index].texture);
 			glDeleteTextures(1, &art[index].texture);
+		}
 	}
 	art_count = 0;
 }

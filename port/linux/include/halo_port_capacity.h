@@ -44,10 +44,10 @@ is drawn as the default one ("YOU GOT STABBED" in debug.txt; Elite_Alpha_Siege
 did at 22 MB), and a frame of bigass_v3 draws more than 64 MB (DamnationCE's
 measurement). The desktop builds' cache is 256 MB, half their 512 MB memory
 window (port/linux/src/platform.h), whose pages are backed as they are used.
-The ILP32 guests' window (Android, Apple) is 128 MB, and their cache the
-Xbox's. */
+The ARM64 guests' window (Android, Apple) is 128 MB, as the web build's, and
+their cache the Xbox's. */
 
-#ifdef HALO_ARM64_GUEST
+#if defined(HALO_ARM64_GUEST) || defined(HALO_WEB)
 #define HALO_PORT_TEXTURE_CACHE_PAGE_COUNT 0x580 /* (0x580) */
 #else
 #define HALO_PORT_TEXTURE_CACHE_PAGE_COUNT 0x4000 /* (0x580) */
@@ -61,10 +61,10 @@ the Xbox. Halo Custom Edition maps' sounds, converted when they load
 (port/linux/game/custom_edition_sounds.c), and those of sound tags loaded
 over a map's (loose_sounds.c), are longer than the Xbox maps' and fill it (a
 campaign map's dialogue and music did, "SOUND CACHE BLOWN" in debug.txt).
-The desktop builds' cache is 16 MB; the ILP32 guests' window keeps the
-Xbox's. */
+The desktop builds' cache is 16 MB; the Android, Apple and web windows keep
+the Xbox's. */
 
-#ifdef HALO_ARM64_GUEST
+#if defined(HALO_ARM64_GUEST) || defined(HALO_WEB)
 #define HALO_PORT_SOUND_CACHE_SIZE 0x400000 /* (0x400000) */
 #else
 #define HALO_PORT_SOUND_CACHE_SIZE 0x1000000 /* (0x400000) */

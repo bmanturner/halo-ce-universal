@@ -29,10 +29,8 @@ jobs:
           xcodebuild -version
           /opt/homebrew/opt/llvm/bin/clang --version
           /opt/homebrew/opt/lld/bin/ld.lld --version
-      - name: ABI, memory, audio, and XISO regressions
+      - name: ABI, memory, audio, display, XISO, shader cache and socket regressions
         run: python3 tools/ios_test.py
-      - name: Browser and native room adapter regressions
-        run: node --test tools/tests/*.test.cjs
       - name: Build unsigned device IPA
         run: python3 tools/ios_build.py --unsigned --jobs 3 --ipa dist/Halo-CE-iOS-unsigned.ipa
       - name: Build ARM64 simulator app

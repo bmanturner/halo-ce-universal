@@ -40,13 +40,6 @@ run(BUILD/'display-probe')
 # Parse untrusted XISO metadata and exercise extraction/cancellation under sanitizers.
 run('python3', 'tools/ios_xiso_test.py')
 
-# Bounded native/WebKit packet transport with real virtual sockets.
-run('xcrun', 'clang', '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror',
-    '-fsanitize=address,undefined', '-Iport/linux/src', '-Iport/web/src',
-    'port/ios/network/room_bridge.c', 'port/web/src/web_net.c',
-    'port/ios/tests/room_bridge_probe.c', '-o', BUILD/'room-bridge')
-run(BUILD/'room-bridge')
-
 # Private compiled-shader cache: bounds, cross-launch reload and concurrency.
 # The standalone suite also runs before any full app build on fresh CI runners.
 prepare_gl_headers()
@@ -56,14 +49,8 @@ run('xcrun', 'clang', '-fobjc-arc', '-Wno-incompatible-pointer-types',
     'port/ios/tests/shader_cache_probe.m', '-o', BUILD/'shader-cache-probe')
 run(BUILD/'shader-cache-probe')
 
-# Actual Darwin TCP/UDP via the native/game ABI, alongside the WebRTC transport.
+# Actual Darwin TCP/UDP via the native/game ABI.
 run('xcrun','clang','-O1','-g','-DHALO_IOS=1','-fsanitize=address,undefined',
-    '-Iport/linux/src','-Iport/ios/network','-Iport/web/src','-Iport/runtime/include',
-    'port/ios/tests/native_net_probe.c','port/ios/host/posix_net.c',
-    'port/ios/network/host_net.c','port/ios/network/host_web_net.c',
-    'port/ios/network/room_bridge.c','-o',BUILD/'native-net-probe')
+    '-Iport/linux/src','-Iport/runtime/include',
+    'port/ios/tests/native_net_probe.c','port/ios/host/posix_net.c','-o',BUILD/'native-net-probe')
 run(BUILD/'native-net-probe')
-
-run('xcrun','clang','-O1','-g','-DHALO_IOS_BROWSER=1','-fsanitize=address,undefined',
-    '-Itools','-Isource','tools/test_quick_play.c','-o',BUILD/'quick-play-probe')
-run(BUILD/'quick-play-probe')

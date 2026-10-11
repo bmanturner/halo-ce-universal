@@ -567,10 +567,6 @@ symbols in this file:
 #include "math/integer_math.h"
 #include "networking/network_game_globals.h"
 #include "networking/network_server_manager.h"
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-#include "networking/network_migration.h"
-#include "../../port/web/src/web_ping.h"
-#endif
 #include "networking/network_game_manager.h"
 #include "network_coop.h" /* port: port/linux/game/network_coop.c */
 #include "network_votekick.h" /* port: port/linux/game/network_votekick.c */
@@ -793,10 +789,6 @@ typedef char verify_game_engine_stage_size[
 
 /* ---------- prototypes */
 
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-boolean web_quick_play_pistol_starts(void);
-#endif
-
 void game_engine_playlist_next(
 	long parameter0,
 	long parameter1,
@@ -869,6 +861,8 @@ static void game_engine_verify_current_map(
 void game_engine_post_rasterize_post_game(
 	void);
 
+/* port: prototypes, so the ARM64 build calls these with the definitions'
+signatures rather than as unprototyped functions */
 struct bitmap_data *bitmap_group_try_and_get_bitmap(
 	long bitmap_group_index,
 	short bitmap_index);
@@ -1421,12 +1415,8 @@ static void rasterize_in_game_score_draw_line(
 	long row_index)
 {
 	rectangle2d bounds = render.camera.window_bounds;
-	short narrow_tab_stops[3
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-		+ 1
-#endif
-	];
-	short wide_tab_stops[NUMBEROF(narrow_tab_stops)];
+	short narrow_tab_stops[3];
+	short wide_tab_stops[3];
 	short *tab_stops;
 	boolean splitscreen;
 	long font_index;
@@ -1439,13 +1429,6 @@ static void rasterize_in_game_score_draw_line(
 	wide_tab_stops[0] = 130;
 	wide_tab_stops[1] = 195;
 	wide_tab_stops[2] = 315;
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-	/* Leave room for the host label beside a full-length player name. */
-	narrow_tab_stops[2] += 50;
-	wide_tab_stops[2] += 50;
-	narrow_tab_stops[3] = 280;
-	wide_tab_stops[3] = 440;
-#endif
 
 	if (bounds.x1 - bounds.x0 > 320)
 		tab_stops = wide_tab_stops;
@@ -1453,7 +1436,7 @@ static void rasterize_in_game_score_draw_line(
 		tab_stops = narrow_tab_stops;
 
 	if (row_index)
-		draw_string_set_tab_stops(tab_stops, NUMBEROF(narrow_tab_stops));
+		draw_string_set_tab_stops(tab_stops, 3);
 	else
 		draw_string_set_tab_stops(NULL, 0);
 
@@ -1625,65 +1608,6 @@ long populate_statistic_buffer(
 
 
 
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-static long game_engine_score_host_player(void)
-{
-	struct network_game_client *client = global_network_game_client_get();
-	short host_machine, index;
-	long *players;
-
-	if (!client || !network_game_is_active())
-		return NONE;
-	host_machine = network_game_client_migration_host_machine(client);
-	if (host_machine < 0 || host_machine >= HALO_PORT_MAXIMUM_NETWORK_MACHINES)
-		return NONE;
-	players = machine_get_player_list(host_machine);
-	for (index = 0; index < MAXIMUM_LOCAL_PLAYERS; index++)
-	{
-		struct player_datum *player = player_try_and_get(players[index]);
-		/* Departed score datums can share a reused machine ID. Only the
-		current input owner is eligible for the host label. */
-		if (player && !player->quit_out_of_game &&
-			player->network_player_data.machine_index == host_machine)
-			return players[index];
-	}
-	return NONE;
-}
-
-static int game_engine_score_host_ping(long player_index)
-{
-	struct network_game_client *client = global_network_game_client_get();
-	struct player_datum *player = player_try_and_get(player_index);
-	unsigned long address, host_address;
-	short machine, host_machine, index;
-	long *players;
-	if (!client || !network_game_is_active() || !player || player->quit_out_of_game)
-		return -1;
-	machine = player->network_player_data.machine_index;
-	host_machine = network_game_client_migration_host_machine(client);
-	if (machine < 0 || machine >= HALO_PORT_MAXIMUM_NETWORK_MACHINES ||
-		host_machine < 0 || host_machine >= HALO_PORT_MAXIMUM_NETWORK_MACHINES)
-		return -1;
-	players = machine_get_player_list(machine);
-	for (index = 0; index < MAXIMUM_LOCAL_PLAYERS; index++)
-		if (players[index] == player_index) break;
-	if (index == MAXIMUM_LOCAL_PLAYERS) return -1;
-	if (global_network_game_server_get())
-	{
-		unsigned long addresses[HALO_PORT_MAXIMUM_NETWORK_MACHINES] = { 0 };
-		network_game_server_migration_routes(addresses, NUMBEROF(addresses));
-		address = addresses[machine];
-		host_address = addresses[host_machine];
-	}
-	else
-	{
-		address = network_game_client_migration_owner_address(machine);
-		host_address = network_game_client_migration_owner_address(host_machine);
-	}
-	return web_net_host_ping(address, host_address, network_game_migration_epoch());
-}
-#endif
-
 static long select_players_to_display(
 	enum postgame_statistic statistic,
 	long player_index,
@@ -1695,9 +1619,6 @@ static long select_players_to_display(
 	boolean debug = rasterizer_debug_options.pad3 == 'E';
 	long local_player_count = 0;
 	long statistic_index;
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-	long host_player_index = game_engine_score_host_player();
-#endif
 
 	if (debug)
 	{
@@ -1719,22 +1640,14 @@ static long select_players_to_display(
 	if (player_count > maximum_count)
 	{
 		long outside_range_count = 0;
-		struct statistic_buffer outside_range[MAXIMUM_LOCAL_PLAYERS
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-			+ 1
-#endif
-		];
+		struct statistic_buffer outside_range[MAXIMUM_LOCAL_PLAYERS];
 		long outside_range_index;
 
 		for (statistic_index = maximum_count; statistic_index < player_count; statistic_index++)
 		{
 			struct player_datum *player = player_get(statistic_buffer[statistic_index].player_index);
 
-			if (player && (player->local_player_index != NONE
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-				|| statistic_buffer[statistic_index].player_index == host_player_index
-#endif
-				))
+			if (player && player->local_player_index != NONE)
 			{
 				if (debug)
 				{
@@ -1756,11 +1669,7 @@ static long select_players_to_display(
 			{
 				struct player_datum *player = player_get(statistic_buffer[insertion_index].player_index);
 
-				if (player->local_player_index == NONE
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-					&& statistic_buffer[insertion_index].player_index != host_player_index
-#endif
-					)
+				if (player->local_player_index == NONE)
 				{
 					csmemmove(
 						&statistic_buffer[insertion_index],
@@ -2412,10 +2321,6 @@ static void game_engine_rasterize_scoreboard(
 		struct player_datum *player;
 		wchar_t *status_string;
 		real_argb_color *row_color;
-		wchar_t const *name;
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-		wchar_t host_name[NUMBEROF(player->name) + 8];
-#endif
 
 		if (row >= rows || position >= list_counts[list])
 			continue;
@@ -2448,22 +2353,12 @@ static void game_engine_rasterize_scoreboard(
 			else
 				usprintf(ping_string, L"%ld", ping);
 		}
-		name = player->name;
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-		/* (the host's name marked: the voice speaker goes after the mark) */
-		if (entry->player_index == game_engine_score_host_player())
-		{
-			usnprintf(host_name, NUMBEROF(host_name), L"%s (HOST)", player->name);
-			host_name[NUMBEROF(host_name) - 1] = 0;
-			name = host_name;
-		}
-#endif
 		usnprintf(
 			row_string,
 			NUMBEROF(row_string),
 			L"\t%s\t%s\t%s\t%s",
 			campaign ? L"" : get_place_string(entry),
-			name,
+			player->name,
 			status_string,
 			ping_string);
 		row_string[NUMBEROF(row_string) - 1] = 0;
@@ -2492,8 +2387,8 @@ static void game_engine_rasterize_scoreboard(
 			text.y0 = (short)(top + (2 + row) * line_height);
 			text.y1 = (short)(text.y0 + line_height);
 			draw_string_set_draw_mode(font_index, NONE, 0, 0, row_color);
-			draw_unicode_string_compute_bounds(&text, name, &ink, &cursor);
-			middle = (short)(top + (draw_unicode_string_capital_middle(&text, name) - top) * SCOREBOARD_SCALE);
+			draw_unicode_string_compute_bounds(&text, player->name, &ink, &cursor);
+			middle = (short)(top + (draw_unicode_string_capital_middle(&text, player->name) - top) * SCOREBOARD_SCALE);
 			scoreboard_rectangle(&icon, bounds.x0, top, line_height, text.x0, SCOREBOARD_NAME_WIDTH, 2 + row, 1);
 			size = (short)((icon.y1 - icon.y0) * 2 / 3);
 			name_end = (short)(bounds.x0 + (MAX(ink.x1, text.x0) - bounds.x0) * SCOREBOARD_SCALE);
@@ -2641,9 +2536,6 @@ static void game_engine_rasterize_in_game_score(
 	long string_list_index;
 	wchar_t *column_name;
 	wchar_t *score_name;
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-	long host_player_index = game_engine_score_host_player();
-#endif
 
 	/* port: a full-screen view's its own, as is the campaign's
 	(game_engine_rasterize_scoreboard) */
@@ -2685,11 +2577,7 @@ static void game_engine_rasterize_in_game_score(
 		score_name = L"";
 
 	game_engine->format_score_name(score_string);
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-	usnprintf(row_string, NUMBEROF(row_string), L"\t%s\t%s\t%s\tPing", column_name, score_name, score_string);
-#else
 	usnprintf(row_string, NUMBEROF(row_string), L"\t%s\t%s\t%s", column_name, score_name, score_string);
-#endif
 	row_string[NUMBEROF(row_string) - 1] = 0;
 	rasterize_in_game_score_draw_line(row_string, FALSE, &color, 1);
 
@@ -2747,30 +2635,6 @@ static void game_engine_rasterize_in_game_score(
 
 			place_string = get_place_string(&entries[entry_index]);
 
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-			{
-				wchar_t ping_string[16];
-				int ping = game_engine_score_host_ping(entry_player_index);
-
-				/* (outside a browser room, which has no ping table: the
-				host's measurement, as the full scoreboard shows) */
-				if (ping < 0)
-				{
-					long measured = distributed_player_ping((short)DATUM_INDEX_TO_ABSOLUTE_INDEX(entry_player_index));
-
-					if (measured != NONE)
-						ping = (int)measured;
-				}
-				if (ping >= 0)
-					usnprintf(ping_string, NUMBEROF(ping_string), L"%d", ping);
-				else
-					usnprintf(ping_string, NUMBEROF(ping_string), L"--");
-				usnprintf(row_string, NUMBEROF(row_string), L"\t%s\t%s%s\t%s\t%s",
-					place_string, player->name,
-					entry_player_index == host_player_index ? L" (HOST)" : L"",
-					status_string, ping_string);
-			}
-#else
 			usnprintf(
 				row_string,
 				NUMBEROF(row_string),
@@ -2778,7 +2642,6 @@ static void game_engine_rasterize_in_game_score(
 				place_string,
 				player->name,
 				status_string);
-#endif
 			row_string[NUMBEROF(row_string) - 1] = 0;
 
 			if (has_teams)
@@ -4815,8 +4678,108 @@ static struct
 	real_vector3d forward;
 	real_vector3d up;
 	long idle_since;
+	/* (the scenario name the map's scripts teleport; NONE when it had none) */
+	short name_index;
 } game_engine_vehicle_homes[MAXIMUM_VEHICLE_HOMES];
 static short game_engine_vehicle_home_count = NONE;
+
+/* still on the pad the map put it on: further than this, and empty, it can
+come back */
+#define VEHICLE_HOME_AWAY_SQUARED 4.0f
+
+/* whether nobody rides the vehicle: no driver or gunner, and no rider among
+its children (which hold its own weapons too) */
+static boolean game_engine_vehicle_empty(
+	struct unit_datum *vehicle)
+{
+	long child_index;
+
+	if (vehicle->unit.driver_object_index != NONE || vehicle->unit.gunner_object_index != NONE)
+		return FALSE;
+	for (child_index = vehicle->object.first_child_object_index; child_index != NONE;
+		child_index = object_get(child_index)->object.next_object_index)
+	{
+		if (object_get(child_index)->object.type == _object_type_biped)
+			return FALSE;
+	}
+	return TRUE;
+}
+
+/* a living vehicle of the home's kind on its pad, but except, that no other
+home follows (one a map's script put there in place of the home's: another
+home's vehicle parked there is still that home's), else NONE */
+static long game_engine_vehicle_home_on_pad(
+	short home,
+	long except)
+{
+	struct object_iterator iterator;
+
+	object_iterator_new(&iterator, _object_mask_vehicle, 0);
+	while (object_iterator_next(&iterator))
+	{
+		struct object_datum *object = object_get(iterator.index);
+		real dx = object->object.position.x - game_engine_vehicle_homes[home].position.x;
+		real dy = object->object.position.y - game_engine_vehicle_homes[home].position.y;
+		real dz = object->object.position.z - game_engine_vehicle_homes[home].position.z;
+		short other;
+
+		if (iterator.index == except || TEST_FLAG(object->object.damage_flags, _object_dead_bit) ||
+			object->definition_index != game_engine_vehicle_homes[home].definition_index ||
+			dx * dx + dy * dy + dz * dz > VEHICLE_HOME_AWAY_SQUARED)
+		{
+			continue;
+		}
+		for (other = 0; other < game_engine_vehicle_home_count; other++)
+		{
+			if (other != home && game_engine_vehicle_homes[other].object_index == iterator.index)
+				break;
+		}
+		if (other == game_engine_vehicle_home_count)
+			return iterator.index;
+	}
+	return NONE;
+}
+
+/* the home follows this vehicle, which keeps (or takes) the home's name */
+static void game_engine_vehicle_home_follow(
+	short home,
+	long object_index)
+{
+	game_engine_vehicle_homes[home].object_index = object_index;
+	if (game_engine_vehicle_homes[home].name_index == NONE)
+		game_engine_vehicle_homes[home].name_index = object_get(object_index)->object.name_index;
+	else
+		object_claim_scenario_name(object_index, game_engine_vehicle_homes[home].name_index);
+}
+
+/* the vehicle this home should follow. The recorded one, if it is still
+alive. A map script often destroys that one and creates it again under the
+same name, or in its place: that one is this home's vehicle, and a second is
+not put on the pad with it. */
+static long game_engine_vehicle_home_current(
+	short home)
+{
+	long object_index = game_engine_vehicle_homes[home].object_index;
+	struct unit_datum *vehicle = unit_try_and_get(object_index);
+	long named_index;
+
+	if (vehicle && !TEST_FLAG(vehicle->object.damage_flags, _object_dead_bit))
+		return object_index;
+
+	named_index = game_engine_vehicle_homes[home].name_index == NONE ? NONE :
+		object_index_from_name_index(game_engine_vehicle_homes[home].name_index);
+	vehicle = unit_try_and_get(named_index);
+	if (vehicle && !TEST_FLAG(vehicle->object.damage_flags, _object_dead_bit))
+	{
+		game_engine_vehicle_homes[home].object_index = named_index;
+		return named_index;
+	}
+
+	object_index = game_engine_vehicle_home_on_pad(home, NONE);
+	if (object_index != NONE)
+		game_engine_vehicle_home_follow(home, object_index);
+	return object_index;
+}
 
 static void game_engine_update_vehicle_respawn(
 	void)
@@ -4845,11 +4808,13 @@ static void game_engine_update_vehicle_respawn(
 			object_get_orientation(iterator.index, &game_engine_vehicle_homes[home].forward,
 				&game_engine_vehicle_homes[home].up);
 			game_engine_vehicle_homes[home].idle_since = NONE;
+			game_engine_vehicle_homes[home].name_index = object->object.name_index;
 		}
 	}
 	for (index = 0; index < game_engine_vehicle_home_count; index++)
 	{
-		struct unit_datum *vehicle = unit_try_and_get(game_engine_vehicle_homes[index].object_index);
+		long object_index = game_engine_vehicle_home_current(index);
+		struct unit_datum *vehicle = unit_try_and_get(object_index);
 		boolean waiting = TRUE;
 
 		if (vehicle && !TEST_FLAG(vehicle->object.damage_flags, _object_dead_bit))
@@ -4858,18 +4823,7 @@ static void game_engine_update_vehicle_respawn(
 			real dy = vehicle->object.position.y - game_engine_vehicle_homes[index].position.y;
 			real dz = vehicle->object.position.z - game_engine_vehicle_homes[index].position.z;
 
-			long child_index;
-
-			/* (empty: no rider among its children, which hold its own
-			weapons too) */
-			waiting = vehicle->unit.driver_object_index == NONE && vehicle->unit.gunner_object_index == NONE &&
-				dx * dx + dy * dy + dz * dz > 4.0f;
-			for (child_index = vehicle->object.first_child_object_index; waiting && child_index != NONE;
-				child_index = object_get(child_index)->object.next_object_index)
-			{
-				if (object_get(child_index)->object.type == _object_type_biped)
-					waiting = FALSE;
-			}
+			waiting = dx * dx + dy * dy + dz * dz > VEHICLE_HOME_AWAY_SQUARED && game_engine_vehicle_empty(vehicle);
 		}
 		if (!waiting)
 			game_engine_vehicle_homes[index].idle_since = NONE;
@@ -4878,14 +4832,42 @@ static void game_engine_update_vehicle_respawn(
 		else if (now - game_engine_vehicle_homes[index].idle_since >= respawn_ticks)
 		{
 			struct object_placement_data placement_data;
+			long stale_index = game_engine_vehicle_homes[index].object_index;
+			long named_index = game_engine_vehicle_homes[index].name_index == NONE ? NONE :
+				object_index_from_name_index(game_engine_vehicle_homes[index].name_index);
+			struct unit_datum *named = unit_try_and_get(named_index);
+			long on_pad = game_engine_vehicle_home_on_pad(index, object_index);
 
-			if (vehicle)
-				object_delete(game_engine_vehicle_homes[index].object_index);
+			/* (a vehicle under the home's name that someone rides is theirs:
+			the home follows it, and waits for it) */
+			if (named && named_index != stale_index && !TEST_FLAG(named->object.damage_flags, _object_dead_bit) &&
+				!game_engine_vehicle_empty(named))
+			{
+				game_engine_vehicle_homes[index].object_index = named_index;
+				game_engine_vehicle_homes[index].idle_since = NONE;
+				continue;
+			}
+			/* (the home's vehicle, empty or wrecked, goes; and the one under
+			its name, but for one on the pad, which it follows instead of a
+			new one: as many vehicles as before) */
+			if (unit_try_and_get(stale_index))
+				object_delete(stale_index);
+			if (named && named_index != stale_index && named_index != on_pad)
+				object_delete(named_index);
+			if (on_pad != NONE)
+			{
+				game_engine_vehicle_home_follow(index, on_pad);
+				game_engine_vehicle_homes[index].idle_since = NONE;
+				continue;
+			}
 			object_placement_data_new(&placement_data, game_engine_vehicle_homes[index].definition_index, NONE);
 			placement_data.position = game_engine_vehicle_homes[index].position;
 			placement_data.forward = game_engine_vehicle_homes[index].forward;
 			placement_data.up = game_engine_vehicle_homes[index].up;
 			game_engine_vehicle_homes[index].object_index = object_new(&placement_data);
+			object_claim_scenario_name(
+				game_engine_vehicle_homes[index].object_index,
+				game_engine_vehicle_homes[index].name_index);
 			game_engine_vehicle_homes[index].idle_since = NONE;
 		}
 	}
@@ -5651,22 +5633,8 @@ boolean game_engine_should_end_game(
 	void)
 {
 	boolean should_end_game = FALSE;
-	boolean keep_solo_host = FALSE;
 
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-	/* A browser Slayer host starts alone and stays open for late joiners.
-	Departed players retain their score datums, so the legacy last-team
-	check would end that match when its first opponent leaves. Score and
-	explicit end conditions and configured time limits still end the game. */
-	if (game_engine && global_network_game_server_get() && network_game_distributed() &&
-		game_engine->type == game_engine_slayer && !global_variant.universal_variant.teams &&
-		global_variant.universal_variant.lives == 0)
-	{
-		keep_solo_host = TRUE;
-	}
-#endif
-
-	if (game_engine && !keep_solo_host && !multiple_teams_alive())
+	if (game_engine && !multiple_teams_alive())
 		should_end_game = TRUE;
 	/* port: the gametype's time limit (game_variant_options) */
 	if (game_engine && game_variant_options_get()->time_limit > 0 &&
@@ -9051,16 +9019,6 @@ static void handle_custom_starting_equipment(
 					long weapon_index;
 					struct object_placement_data placement_data;
 
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-					/* Change only the automatic lobby's plasma-pistol start. */
-					if (web_quick_play_pistol_starts() && definition_index != NONE &&
-						definition_index == tag_loaded('weap', "weapons\\plasma pistol\\plasma pistol"))
-					{
-						long pistol = tag_loaded('weap', "weapons\\pistol\\pistol");
-						if (pistol != NONE)
-							definition_index = pistol;
-					}
-#endif
 					object_placement_data_new(
 						&placement_data,
 						definition_index,
@@ -9701,72 +9659,4 @@ void game_engine_read_network_state(
 	shows it) */
 	if (postgame_state != 0 && game_engine_globals.postgame_state == 0)
 		game_engine_end_game();
-}
-
-/* Unlike the regular game-state update this also preserves the authority's
-postgame clock and team allocator. HUD timers belong to the local machine. */
-struct game_engine_migration_state
-{
-	long type;
-	unsigned long flags;
-	long next_team_index;
-	real postgame_timer;
-	real postgame_progress;
-	long postgame_state;
-	long state_size;
-};
-
-long game_engine_write_migration_state(byte *buffer, long size)
-{
-	struct game_engine_migration_state state;
-	long written;
-	if (size < (long)sizeof(state))
-		return 0;
-	memset(&state, 0, sizeof(state));
-	state.type = game_engine_get_type();
-	state.flags = game_engine_globals.flags;
-	state.next_team_index = game_engine_globals.next_team_index;
-	state.postgame_timer = game_engine_globals.postgame_timer;
-	state.postgame_progress = game_engine_globals.postgame_progress;
-	state.postgame_state = game_engine_globals.postgame_state;
-	written = game_engine_write_network_state(buffer + sizeof(state), size - sizeof(state));
-	if (written <= 0)
-		return 0;
-	state.state_size = written;
-	memcpy(buffer, &state, sizeof(state));
-	return sizeof(state) + written;
-}
-
-boolean game_engine_validate_migration_state(byte const *buffer, long size)
-{
-	struct game_engine_migration_state state;
-	byte current[0xF00];
-	long expected;
-	if (size < (long)sizeof(state))
-		return FALSE;
-	memcpy(&state, buffer, sizeof(state));
-	expected = game_engine_write_network_state(current, sizeof(current));
-	return game_engine && state.type == game_engine_get_type() && expected > 0 &&
-		state.state_size == expected && state.state_size == size - (long)sizeof(state);
-}
-
-boolean game_engine_read_migration_state(byte const *buffer, long size, boolean restore_game_type)
-{
-	struct game_engine_migration_state state;
-	if (!game_engine_validate_migration_state(buffer, size))
-		return FALSE;
-	memcpy(&state, buffer, sizeof(state));
-	/* Set the postgame state first so restoring it does not announce another
-game end or invoke the end-game callback a second time. */
-	game_engine_globals.flags = state.flags;
-	game_engine_globals.next_team_index = state.next_team_index;
-	if (restore_game_type || game_engine_globals.postgame_state == state.postgame_state)
-	{
-		game_engine_globals.postgame_timer = state.postgame_timer;
-		game_engine_globals.postgame_progress = state.postgame_progress;
-		game_engine_globals.postgame_state = state.postgame_state;
-	}
-	if (restore_game_type)
-		game_engine_read_network_state(buffer + sizeof(state), state.state_size);
-	return TRUE;
 }

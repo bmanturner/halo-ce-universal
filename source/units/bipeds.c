@@ -281,11 +281,6 @@ symbols in this file:
 objects on the host's word alone) */
 boolean network_objects_may_delete(long object_index);
 
-#ifdef HALO_WEB
-/* called without a prototype in scope; a WebAssembly call must match the
-definition's signature */
-short unit_get_local_player_index(long unit_index);
-#endif
 /* port: an unarmed player's melee's length, in ticks (a weapon's is about
 this: its first person melee animation, sped up a quarter) */
 #define UNARMED_MELEE_TICKS 16

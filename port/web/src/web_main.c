@@ -3,24 +3,27 @@ WEB_MAIN.C
 
 The web build's entry point, and the WebAssembly memory's layout.
 
-main runs on a pthread (Emscripten's PROXY_TO_PTHREAD), where it may block.
-It mounts the site's Origin Private File System, where the page extracted
-the game's maps folder (port/web/site/xiso.js) and where the saved games
-and config.toml are kept, at /data, then starts the game
-(shell_xbox.c's main, renamed halo_game_main by tools/web_build.py).
+main runs on a thread of its own (Emscripten's PROXY_TO_PTHREAD), where it
+may block as the game does. It mounts the site's Origin Private File System,
+where the page put the game's maps folder (port/web/site/xiso-worker.js) and
+where the saved games and config.toml are kept, at /data; then it starts the
+game (shell_xbox.c's main, renamed halo_game_main by tools/web_build.py).
 */
 
 #include <emscripten.h>
 #include <emscripten/wasmfs.h>
-#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "posix.h"
+#include <sys/stat.h>
 
 #include "web_shared.h"
 
 int halo_game_main(void);
+/* web_net.c: the arguments, for posix_command_line_argument */
+void web_net_arguments(int count, char **values);
+/* web_library.js: a line for the page (kind 0 a status, 2 an invite link, 3 a
+fatal error) */
 void web_js_post(int kind, const char *text);
 
 /* ---------- memory
@@ -39,38 +42,48 @@ size_t emscripten_get_heap_size(void)
 	return size > WEB_HEAP_LIMIT ? WEB_HEAP_LIMIT : size;
 }
 
+/* ---------- what the page reads and writes (web_shared.h) */
+
+volatile int32_t web_shared[WEB_SHARED_WORDS];
+
+EMSCRIPTEN_KEEPALIVE volatile int32_t *web_state(void)
+{
+	return web_shared;
+}
+
+void web_frame_shown(void)
+{
+	__atomic_add_fetch(&web_shared[_web_frames_shown], 1, __ATOMIC_RELAXED);
+}
+
 /* ---------- start */
 
-
-static void set_environment(const char *name, const char *value)
+/* a setting from the browser, unless the page's arguments gave it */
+static void set_default(const char *name, const char *value)
 {
-	/* the page's choice (Module.arguments) wins */
 	setenv(name, value, 0);
 }
 
 int main(int argc, char **argv)
 {
 	backend_t opfs;
-	struct web_shared_state *shared = web_shared_state();
-	char width[32];
 	int index;
 
-	/* --NAME=value arguments from the page become environment variables,
-	which override config.toml (port/linux/src/port_config.c) */
+	/* --NAME=value arguments from the page (port/web/site/app.js) become
+	environment variables, which come before config.toml
+	(port/linux/src/port_config.c); the others are the command line's */
 	for (index = 1; index < argc; index++)
 	{
-		if (!strncmp(argv[index], "--", 2) && strchr(argv[index], '='))
+		const char *equals = strchr(argv[index], '=');
+
+		if (!strncmp(argv[index], "--", 2) && equals && equals - argv[index] - 2 < 128)
 		{
 			char name[128];
-			const char *equals = strchr(argv[index], '=');
 			size_t length = (size_t)(equals - argv[index] - 2);
 
-			if (length < sizeof(name))
-			{
-				memcpy(name, argv[index] + 2, length);
-				name[length] = '\0';
-				setenv(name, equals + 1, 1);
-			}
+			memcpy(name, argv[index] + 2, length);
+			name[length] = '\0';
+			setenv(name, equals + 1, 1);
 		}
 	}
 
@@ -80,19 +93,18 @@ int main(int argc, char **argv)
 		web_js_post(3, "The browser's private storage (OPFS) cannot be opened.");
 		return EXIT_FAILURE;
 	}
-	posix_make_directory("/data/save");
+	mkdir("/data/save", 0777);
 
-	set_environment("HALO_DATA_ROOT", "/data");
-	set_environment("HALO_SAVE_ROOT", "/data/save");
-	/* no UDP in a browser: system link and internet play stay off */
-	set_environment("HALO_NET_ONLINE", "false");
-	set_environment("HALO_UPDATE_AUTO", "false");
-	/* 480 lines in the shape of the page (d3d8_gl.c screen_mode_choose) */
-	if (shared->display_width > 0 && shared->display_height > 0)
-	{
-		snprintf(width, sizeof(width), "%d", (int)(480L * shared->display_width / shared->display_height));
-		set_environment("HALO_DISPLAY_WIDTH", width);
-	}
+	set_default("HALO_DATA_ROOT", "/data");
+	set_default("HALO_SAVE_ROOT", "/data/save");
+	/* the canvas fills the page, which the page's own button takes
+	fullscreen (a page may only do so from a click) */
+	set_default("HALO_DISPLAY_MODE", "windowed");
+	/* (Custom Edition maps' window would be the C heap's here:
+	port/linux/src/xbox_memory.c) */
+	set_default("HALO_CUSTOM_EDITION", "false");
+	/* (an invite link among them is joined: port/linux/src/p2p.c) */
+	web_net_arguments(argc, argv);
 	web_js_post(0, "starting");
 	return halo_game_main();
 }

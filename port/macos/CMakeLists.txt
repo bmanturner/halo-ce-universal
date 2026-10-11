@@ -1,9 +1,6 @@
 # Native AppKit host around the shared statically compiled Apple guest image.
 cmake_minimum_required(VERSION 3.24)
 project(HaloCE LANGUAGES C CXX OBJC ASM)
-if(CMAKE_SYSTEM_NAME STREQUAL "tvOS")
-    message(FATAL_ERROR "Browser-room integration currently targets iOS, not tvOS")
-endif()
 set(HALO_BUNDLE_IDENTIFIER "org.haloce.macos" CACHE STRING "App bundle identifier")
 get_filename_component(ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 set(SDL_SHARED OFF CACHE BOOL "" FORCE)
@@ -18,17 +15,16 @@ set(HALO_DEVICE_FAMILY "1,2")
 add_executable(HaloCE MACOSX_BUNDLE
     ${HALO_PLATFORM_SOURCES} "${ROOT}/port/runtime/xiso.c" "${ROOT}/port/apple/game_store.m"
     ../ios/host/host_main.m ../ios/host/host_memory.c ../ios/host/host_loader.c ../ios/host/host_syscall.c ../ios/host/host_gl.c ../ios/host/host_debug.m ../ios/host/host_metalfx.m ../ios/host/host_graphics.m ../ios/host/host_shader_cache.m ../ios/host/guest_call.S
-    ../ios/host/host_thread.c ../ios/host/host_sdl.c ../ios/network/host_room.m ../ios/network/room_bridge.c
-    "${ROOT}/port/ios/network/host_web_net.c" "${ROOT}/port/ios/network/host_net.c" "${ROOT}/port/ios/network/host_browser.m"
+    ../ios/host/host_thread.c ../ios/host/host_sdl.c
     "${ROOT}/port/linux/src/posix_files.c" ../ios/host/posix_net.c
     "${ROOT}/build/ios/host/bridges.c" "${ROOT}/build/ios/embedded/guest_image.S")
-target_include_directories(HaloCE PRIVATE ../ios/host ../ios/network "${ROOT}/port/web/src" "${ROOT}/port/runtime" "${ROOT}/port/runtime/include"
+target_include_directories(HaloCE PRIVATE ../ios/host "${ROOT}/port/runtime" "${ROOT}/port/runtime/include"
     "${ROOT}/port/runtime/guest/runtime" "${ROOT}/port/linux/src" "${ROOT}/build/ios/host"
     "${ROOT}/build/ios/gl_include" "${ROOT}/build/ios/embedded")
-target_compile_definitions(HaloCE PRIVATE HALO_IOS=1 HALO_MACOS=1 HALO_IOS_BROWSER_HOST=1 st_mtim=st_mtimespec st_atim=st_atimespec st_ctim=st_ctimespec)
+target_compile_definitions(HaloCE PRIVATE HALO_IOS=1 HALO_MACOS=1 st_mtim=st_mtimespec st_atim=st_atimespec st_ctim=st_ctimespec)
 target_compile_options(HaloCE PRIVATE -Wno-deprecated-declarations)
 target_compile_options(HaloCE PRIVATE "$<$<COMPILE_LANGUAGE:OBJC>:-fobjc-arc>")
-target_link_libraries(HaloCE PRIVATE SDL3::SDL3-static "-framework WebKit" "-framework QuartzCore" "-framework Foundation" "-framework AppKit")
+target_link_libraries(HaloCE PRIVATE SDL3::SDL3-static "-framework QuartzCore" "-framework Foundation" "-framework AppKit")
 target_link_libraries(HaloCE PRIVATE "-framework UniformTypeIdentifiers" "-framework Metal" "-framework CoreVideo")
 file(GLOB HALO_LICENSES "${ROOT}/build/ios/licenses/*.txt")
 target_sources(HaloCE PRIVATE ${HALO_LICENSES})
@@ -42,10 +38,7 @@ if(HALO_DEVELOPMENT_TEAM)
     set_target_properties(HaloCE PROPERTIES XCODE_ATTRIBUTE_DEVELOPMENT_TEAM "${HALO_DEVELOPMENT_TEAM}")
 endif()
 
-# Ship the exact browser room protocol alongside its native packet adapter.
-set(HALO_ROOM_SCRIPTS "${ROOT}/port/web/site/net.js" "${ROOT}/port/ios/network/room.js")
-target_sources(HaloCE PRIVATE ${HALO_ROOM_SCRIPTS})
-set_source_files_properties(${HALO_ROOM_SCRIPTS} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/Network)
+include("${ROOT}/port/apple/dtls.cmake")
 
 if(NOT CMAKE_OSX_SYSROOT MATCHES "[Ss]imulator")
     target_link_libraries(HaloCE PRIVATE "-framework MetalFX")

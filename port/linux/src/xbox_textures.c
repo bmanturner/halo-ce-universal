@@ -710,10 +710,9 @@ static void upload(GLuint texture, GLenum target, const struct xgpu_texture_desc
 	decode_compressed = description->compressed && !xgpu_capabilities.s3tc;
 #endif
 #ifdef HALO_WEB
-	/* WebGL takes S3TC for 2D textures only, and the top level's sides in
-	multiples of four */
-	if (description->compressed && (target == GL_TEXTURE_3D || (description->width & 3) || (description->height & 3)))
-		decode_compressed = TRUE;
+	/* WebGL's S3TC takes 2D textures whose sides are multiples of 4 */
+	decode_compressed |= description->compressed &&
+		(target == GL_TEXTURE_3D || (description->width & 3) || (description->height & 3));
 #endif
 	converted = description->compressed && !decode_compressed ? NULL : malloc(largest * sizeof(unsigned long));
 	if (!converted && !(description->compressed && !decode_compressed))
@@ -725,9 +724,9 @@ static void upload(GLuint texture, GLenum target, const struct xgpu_texture_desc
 	glBindTexture(target, texture);
 	xgpu_gl_state_invalidate();
 	/* the channel of the texels each channel is sampled from, set on every
-	upload: a texture object can be reused for other texels. WebGL 2 has no
-	texture swizzle (INVALID_ENUM): the web build converts texels to RGBA on
-	the CPU and samples Halo PC's channel orders as they are stored */
+	upload: a texture object can be reused for other texels (WebGL 2 has no
+	texture swizzle: the converted texels' channels are put in order before
+	they are uploaded instead, and Custom Edition maps do not run there) */
 #ifndef HALO_WEB
 	{
 		GLint channels[4] = { GL_RED, GL_GREEN, GL_BLUE, GL_ALPHA };
@@ -795,16 +794,15 @@ static void upload(GLuint texture, GLenum target, const struct xgpu_texture_desc
 					return;
 				}
 #if defined(HALO_WEB) || defined(HALO_IOS)
-				/* Normalize decoded BGRA on the CPU for WebGL and both iOS
-				   drivers, avoiding driver-dependent texture swizzling. */
 				{
+					/* BGRA (32-bit ARGB words) to the RGBA WebGL and iOS take */
 					unsigned long texel, count = (unsigned long)width * (unsigned long)height * (unsigned long)depth;
 
 					for (texel = 0; texel < count; texel++)
 					{
 						unsigned long value = converted[texel];
 
-						converted[texel] = (value & 0xff00ff00UL) | ((value & 0xffUL) << 16) | ((value >> 16) & 0xffUL);
+						converted[texel] = (value & 0xff00ff00UL) | ((value >> 16) & 0xffUL) | ((value & 0xffUL) << 16);
 					}
 				}
 #endif
@@ -860,9 +858,6 @@ static struct
 	unsigned long drop_serial;
 } recent_textures[RECENT_TEXTURE_COUNT];
 static unsigned long texture_drop_serial = 1;
-#ifdef HALO_WEB
-#define WEB_CHECKED_TEXTURE_BYTES 0x20000
-#endif
 static unsigned long texture_frame = 0;
 
 /* (every bit of the three mixed into the top ones: textures are aligned,
@@ -964,16 +959,7 @@ GLuint xgpu_texture_get(const DWORD *resource, const D3DCOLOR *palette, GLenum *
 	entry = NULL;
 	if (!palettized && recent_textures[recent].entry && recent_textures[recent].data == data &&
 		recent_textures[recent].format_word == format_word && recent_textures[recent].size_word == size_word &&
-		recent_textures[recent].drop_serial == texture_drop_serial
-#ifdef HALO_WEB
-		/* without page protection a write is only seen by hashing
-		(port/web/src/web_memory_watch.c): small textures, which the game
-		rewrites between draws (the text renderer's character cache), are
-		checked at every lookup; large ones change through file reads, which
-		announce themselves */
-		&& recent_textures[recent].entry->size > WEB_CHECKED_TEXTURE_BYTES
-#endif
-		)
+		recent_textures[recent].drop_serial == texture_drop_serial)
 	{
 		entry = recent_textures[recent].entry;
 		if (recent_textures[recent].watch_serial == watch_serial)

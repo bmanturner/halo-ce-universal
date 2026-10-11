@@ -10,7 +10,6 @@
 #include <sys/stat.h>
 #include "ios_host.h"
 #include "host.h"
-#include "room_bridge.h"
 #include "xiso.h"
 #include "tvos_host.h"
 #include <SDL3/SDL.h>
@@ -107,16 +106,6 @@ int host_ios_gamepad_button(SDL_Gamepad *pad,int button){
         latched[player]&=~bit;
     }
     return down;
-}
-
-/* Browser rooms need WebKit, which tvOS lacks. */
-void host_ios_room_prepare(void) {}
-void host_ios_room_tick(void) {}
-void host_ios_room_report(const char *json) {(void)json;}
-void host_ios_room_test_navigation_consumed(void) {}
-void host_ios_room_open(void) {
-    host_logf(HOST_LOG_ERROR,"Browser rooms are not available on Apple TV");
-    const uint32_t command[4]={2,1,0,0};ios_room_queue_command(command);
 }
 
 static void copy_path(char *out,size_t size,NSString *path) {

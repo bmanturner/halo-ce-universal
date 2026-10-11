@@ -1646,7 +1646,6 @@ boolean network_connection_idle(
 		0x21D,
 		connection);
 
-#if !defined(HALO_WEB) && !defined(HALO_IOS_BROWSER)
 	SET_FLAG(connection->flags, _connection_going_stale_bit, FALSE);
 	if (timeout)
 	{
@@ -1675,8 +1674,6 @@ boolean network_connection_idle(
 	{
 		connection->last_keep_alive_time = current_time;
 	}
-
-#endif
 
 	if (TEST_FLAG(connection->flags, _connection_create_server_bit))
 	{
@@ -1718,40 +1715,6 @@ boolean network_connection_idle(
 			error(_error_silent, "network_connection_idle_client_reliable_endpoint failed");
 		}
 	}
-
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-	/* Browser scheduling can pause while healthy RTC packets queue up. */
-	if (success)
-	{
-		SET_FLAG(connection->flags, _connection_going_stale_bit, FALSE);
-		if (timeout)
-		{
-			if (current_time > connection->last_keep_alive_time + MILLISECONDS_PER_SECOND * 5)
-			{
-				SET_FLAG(connection->flags, _connection_going_stale_bit, TRUE);
-			}
-			if (current_time > connection->last_keep_alive_time + timeout)
-			{
-				if (global_connection_dont_timeout)
-				{
-					error(
-						_error_silent,
-						"dont timeout is active so not timing out of a connection");
-					connection->last_keep_alive_time = current_time;
-				}
-				else
-				{
-					error(_error_silent, "timeout in network_connection_idle");
-					return FALSE;
-				}
-			}
-		}
-		else
-		{
-			connection->last_keep_alive_time = current_time;
-		}
-	}
-#endif
 
 	if (success && connection->unreliable_endpoint)
 	{

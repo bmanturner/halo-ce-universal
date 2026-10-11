@@ -107,16 +107,22 @@ symbols in this file:
 #include "main/main.h"
 #include "memory/data_packet_groups.h"
 #include "network_client_manager.h"
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-#include "network_migration.h"
-#include "../../port/linux/game/network_distributed.h"
-#endif
 #include "network_messages.h"
 #include "network_game_manager.h"
 #include "network_game_globals.h"
 #include "network_server_manager_internal.h"
 
 /* ---------- constants */
+
+enum network_game_client_state
+{
+	_network_game_client_state_searching,
+	_network_game_client_state_joining,
+	_network_game_client_state_pregame,
+	_network_game_client_state_ingame,
+	_network_game_client_state_postgame,
+	NUMBER_OF_NETWORK_GAME_CLIENT_STATES,
+};
 
 /* ---------- macros */
 
@@ -292,12 +298,6 @@ boolean network_game_distributed_client(
 	void)
 {
 	return game_connection() == _game_connection_network_client;
-}
-
-/* The target branch uses the distributed protocol for every native game. */
-boolean network_game_distributed(void)
-{
-	return TRUE;
 }
 
 boolean network_game_is_active(
@@ -602,11 +602,6 @@ boolean network_game_client_end_frame(
 	}
 	else if (network_game_client_get_state(global_network_game_client, NULL) == _network_game_client_state_ingame)
 	{
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-		/* There is no gameplay write until the same player has reattached. */
-		if (network_game_client_migration_waiting(global_network_game_client))
-			return TRUE;
-#endif
 		now = system_milliseconds();
 		if (now-bss_004566dc.last_client_update_time >=
 			/* (the input goes in its own message, network_distributed.c,
@@ -796,44 +791,3 @@ boolean create_global_network_game_server(
 }
 
 /* ---------- private code */
-
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-boolean create_global_network_game_server_from_migration(unsigned long epoch)
-{
-	if (!global_network_game_client || !epoch || !network_distributed_migration_ready())
-		return FALSE;
-	if (global_network_game_server)
-	{
-		/* A client outage can elect the current healthy host again. Its
-		   authoritative world is already current; renew only the transport. */
-		if (!network_game_server_recover_match(global_network_game_server, epoch))
-			return FALSE;
-	}
-	else
-	{
-		if (!network_distributed_migration_promote())
-			return FALSE;
-		global_network_game_server = network_game_server_adopt_match(global_network_game_client, epoch);
-		if (!global_network_game_server)
-			return FALSE;
-	}
-	bss_004566dc.client_started = FALSE;
-	game_connection_set(_game_connection_network_server);
-	update_queues_migrate();
-	return TRUE;
-}
-#endif
-
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-void network_game_demote_migration_host(void)
-{
-	if (global_network_game_server)
-	{
-		network_game_server_release_migration_transport(global_network_game_server);
-		global_network_game_server = NULL;
-		bss_004566dc.quickstart_local = FALSE;
-	}
-	bss_004566dc.client_started = FALSE;
-	game_connection_set(_game_connection_network_client);
-}
-#endif

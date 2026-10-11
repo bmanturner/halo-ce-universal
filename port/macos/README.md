@@ -6,7 +6,8 @@ Homebrew LLVM and LLD. The named output is
 name, while the localized Finder/Dock icon label is **Halo**, matching iOS.
 This shares the iOS signed ARM64 ILP32 guest, address
 arena and ABI bridges, with an AppKit host, SDL keyboard/mouse/gamepads,
-ANGLE Metal rendering, and the same bundled PR #12 room transport. No touch
+ANGLE Metal rendering, and the same internet play as iOS (upstream's p2p,
+including WebRTC with browsers). No touch
 overlay is created on macOS. Upstream PC-style menus include **Multiplayer →
 Join Game → Server Browser** for public native servers, and updated game
 settings and pause menus. Apple-specific graphics options remain in the
@@ -56,9 +57,8 @@ its output is notarized or legally cleared for public distribution.
 
 Validated locally: native Metal main menu and Silent Cartographer rendering,
 audio, private-image transaction tests, and signed sandboxed runtime launch.
-Mac controller hardware, Mac/browser crossplay and extended MetalFX behavior
-still need interactive testing. iOS/browser crossplay was validated previously;
-sharing that transport does not establish that every Mac network path works.
+Mac controller hardware, internet play with browsers and extended MetalFX
+behavior still need interactive testing.
 
 The standard application menu includes **Quit** (⌘Q); Dock Quit uses the
 same SDL quit event. SDL must create NSApplication before any AppKit UI so

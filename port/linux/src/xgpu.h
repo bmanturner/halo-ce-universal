@@ -31,7 +31,7 @@ struct xgpu_capabilities
 
 extern struct xgpu_capabilities xgpu_capabilities;
 
-/* port/runtime/guest/runtime/guest_host.h */
+/* port/android/guest/runtime/guest_host.h, port/runtime/guest/runtime/guest_host.h */
 int host_gl_has_extension(const char *name);
 void host_gl_read_buffer(unsigned int buffer, unsigned int offset, unsigned int size, void *data);
 void host_gl_buffer_write(unsigned int target, unsigned int offset, unsigned int size, const void *data);
@@ -46,6 +46,9 @@ changes GL state behind it (binding a texture to upload it, deleting one)
 must call this afterwards. */
 
 void xgpu_gl_state_invalidate(void);
+/* a texture about to be deleted: the binding shadows forget it, since GL
+may give its name to a new texture (call before glDeleteTextures) */
+void xgpu_gl_texture_deleted(unsigned int texture);
 
 /* a compiled shader, or a linked program of two, or 0 with the log
 written */
@@ -123,7 +126,7 @@ struct nv2a_pixel_shader_key
 	unsigned long alpha_test_function;
 	unsigned char fog_enable;
 	unsigned char fog_table_mode;
-	/* inside a visibility test: count the samples that pass (iOS) */
+	/* inside a visibility test: count the samples that pass (Android, iOS) */
 	unsigned char count_samples;
 	/* a high-res HUD meter (hud_hires.h) drawn with the meter's blend (the
 	destination kept by the source's alpha): that alpha is eased to 1 by the
@@ -143,6 +146,11 @@ struct nv2a_pixel_shader_key
 	proportion to how far alpha is past the reference, not all of the pixel
 	or none of it, so that cut-out edges (foliage, grates) are smoothed too */
 	unsigned char alpha_test_samples;
+	/* the source's blend factor, applied here instead (1 the blend color, 2
+	one less it, 3 its alpha, 4 one less that; 0 none): WebGL refuses a
+	blend of a constant color factor with a constant alpha one, as the
+	meters' (shader_transparent_meter) */
+	unsigned char source_blend;
 };
 
 char *nv2a_pixel_shader_to_glsl(const struct nv2a_pixel_shader_key *key);

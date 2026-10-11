@@ -1,157 +1,49 @@
 /*
 WEB_SHARED.H
 
-The state the page (port/web/site/app.js, on the browser's main thread)
-shares with the game (a pthread, in a Web Worker) through the WebAssembly
-memory. The page finds it with web_shared_state() and reads and writes it
-through typed arrays at the offsets below: every member is a 32-bit word,
-so the layout is the same on both sides.
-
-- events: keyboard, mouse and focus events, a ring the page writes and
-  SDL_PollEvent reads (web_sdl.c);
-- gamepads: the state of up to WEB_GAMEPAD_COUNT controllers (the page
-  polls the Gamepad API each animation frame; the touch controls are one
-  more controller);
-- display: the size of the page's canvas in device pixels, and a counter
-  the page advances each animation frame, which paces the game's frames;
-- audio: a ring of interleaved stereo float samples the game's mixer
-  fills and the page's AudioWorklet plays.
+The words of the game's memory the page reads and writes itself
+(port/web/site/app.js, touch.js): the WebAssembly memory is shared, so the
+page's thread sees them as the game's threads do, without a message. The
+page finds them with web_state (web_main.c) and knows them by these indices,
+32-bit words each: change them together.
 */
 
-#ifndef __HALO_WEB_SHARED_H
-#define __HALO_WEB_SHARED_H
+#ifndef WEB_SHARED_H
+#define WEB_SHARED_H
 
 #include <stdint.h>
 
-#define WEB_SHARED_MAGIC 0x42455748u /* 'HWEB' */
-#define WEB_SHARED_VERSION 1
-
-#define WEB_EVENT_CAPACITY 256
-#define WEB_GAMEPAD_COUNT 5
-#define WEB_AUDIO_RING_FRAMES 8192 /* a power of two */
-/* the rings of packets to and from the other players (web_net.c, net.js) */
-#define WEB_NET_OUT_BYTES (1024 * 1024) /* powers of two */
-#define WEB_NET_IN_BYTES (2 * 1024 * 1024)
-#define WEB_GATEWAY_PEERS 32
-#define WEB_PING_PEERS 128
-#define WEB_PING_STALE_MS 10000
-
 enum
 {
-	WEB_EVENT_NONE,
-	WEB_EVENT_KEY,          /* a: scancode, b: down, c: repeat, d: keycode */
-	WEB_EVENT_MOUSE_MOTION, /* x, y: relative motion in pixels */
-	WEB_EVENT_MOUSE_BUTTON, /* a: SDL button, b: down */
-	WEB_EVENT_MOUSE_WHEEL,  /* y: notches */
-	WEB_EVENT_FOCUS,        /* a: gained */
-	WEB_EVENT_GAMEPAD_ADDED,/* a: id */
-	WEB_EVENT_QUIT,
+	/* the game's: the frames shown so far (the page says it is loading while
+	they stand still) */
+	_web_frames_shown = 0,
+	/* the game's, for the touch controls: touch_input.c's _touch_scene_*
+	bits, port 0's rumble (0, or 64 to 255), and the game control on each of
+	the 16 controller buttons with a count of their changes */
+	_web_touch_scene = 1,
+	_web_touch_rumble = 2,
+	_web_touch_bindings_serial = 3,
+	_web_touch_bindings = 4,
+	/* the page's: the controller state the touch controls make (the SDL
+	axes left x and y, right x and y, the left and right triggers, then
+	the SDL button bits), a count of presses of each input (the 15 buttons,
+	then the triggers), and the view's swipe and the gyroscope's turn since
+	the game last read them, in 1/256 of a logical pixel */
+	_web_touch_state = 20,
+	_web_touch_presses = 27,
+	_web_touch_look = 44,
+	/* the game's: whether it wants the mouse for the aim (its relative mode,
+	platform_mouse_capture): the page asks for the pointer lock itself on a
+	click (app.js), as a request from the game's thread, which reaches the
+	page outside the click, is refused once the player has let it go */
+	_web_mouse_wanted = 48,
+	WEB_SHARED_WORDS = 49,
 };
 
-struct web_event
-{
-	int32_t type;
-	int32_t a, b, c, d;
-	float x, y;
-	int32_t reserved;
-};
+#define WEB_TOUCH_INPUTS 17
 
-/* the SDL_GamepadButton bits and SDL_GamepadAxis values */
-struct web_gamepad
-{
-	int32_t connected;
-	int32_t id;          /* the SDL_JoystickID, never 0 */
-	int32_t type;        /* SDL_GamepadType */
-	uint32_t buttons;    /* 1 << SDL_GamepadButton */
-	int32_t axes[6];     /* SDL_GamepadAxis order, -32768..32767 (triggers 0..32767) */
-	int32_t rumble_low, rumble_high; /* written by the game, 0..65535 */
-	int32_t rumble_serial;           /* advanced with each rumble request */
-	int32_t rumble_milliseconds;
-};
-
-struct web_shared_state
-{
-	uint32_t magic;
-	uint32_t version;
-	uint32_t size;                  /* sizeof(struct web_shared_state) */
-
-	/* events: the page writes at event_write, the game reads at
-	event_read; both count without wrapping */
-	volatile int32_t event_write;
-	volatile int32_t event_read;
-	struct web_event events[WEB_EVENT_CAPACITY];
-
-	struct web_gamepad gamepads[WEB_GAMEPAD_COUNT];
-
-	/* the canvas in device pixels, and the animation frame counter */
-	volatile int32_t display_width;
-	volatile int32_t display_height;
-	volatile int32_t frame_counter;
-	/* frames the game presented, and whether it waits for each animation
-	frame (display.vsync) */
-	volatile int32_t frames_presented;
-	volatile int32_t vsync;
-
-	/* audio: sample rate, and the ring (WEB_AUDIO_RING_FRAMES stereo
-	frames); the game writes at audio_write, the worklet reads at
-	audio_read, both counting frames without wrapping */
-	volatile int32_t audio_rate;
-	volatile int32_t audio_open;
-	volatile int32_t audio_write;
-	volatile int32_t audio_read;
-	volatile int32_t audio_underruns;
-	float audio_ring[WEB_AUDIO_RING_FRAMES * 2];
-
-	/* the page's state for the game: nonzero while it is hidden */
-	volatile int32_t page_hidden;
-	/* the game's state for the page: 1 once the game's window opened */
-	volatile int32_t game_started;
-	volatile int32_t reserved[16];
-
-	/* online play (web_net.c, port/web/site/net.js): this machine's address
-	on the players' network (network byte order, from the page), and the
-	packets the game sends to other machines and receives from them; each
-	ring counts bytes without wrapping */
-	volatile int32_t net_local_address;
-	volatile int32_t net_out_write;
-	volatile int32_t net_out_read;
-	volatile int32_t net_in_write;
-	volatile int32_t net_in_read;
-	unsigned char net_out[WEB_NET_OUT_BYTES];
-	unsigned char net_in[WEB_NET_IN_BYTES];
-	/* Native invite relay identity. Peer address is published last; zero
-	means an unused slot. Identifiers are two little-endian words (6 bytes). */
-	volatile int32_t gateway_enabled;
-	volatile int32_t gateway_identifier[2];
-	volatile int32_t gateway_peers[WEB_GATEWAY_PEERS][3];
-	/* Host RTT table: page publishes under an odd/even sequence lock. All
-	addresses use the shared network byte order; -1 means no fresh sample. */
-	volatile int32_t ping_sequence, ping_host, ping_epoch, ping_updated, ping_count;
-	volatile int32_t ping_peers[WEB_PING_PEERS][2];
-};
-
-/* a packet in the rings: this header, then the payload, padded to 4 bytes;
-addresses and ports in network byte order */
-enum
-{
-	WEB_PACKET_DATAGRAM = 1,
-	WEB_PACKET_OPEN,    /* a stream connects */
-	WEB_PACKET_DATA,    /* a stream's bytes */
-	WEB_PACKET_CLOSE,   /* a stream's end closed */
-	WEB_PACKET_REFUSE,  /* nothing listens where a stream connected */
-};
-
-struct web_packet_header
-{
-	uint32_t size;      /* the whole packet, padded */
-	uint32_t kind;
-	uint32_t source_ip;
-	uint32_t destination_ip;
-	uint16_t source_port;
-	uint16_t destination_port;
-	uint32_t length;    /* of the payload */
-};
-
-struct web_shared_state *web_shared_state(void);
+/* the words (web_main.c) */
+extern volatile int32_t web_shared[WEB_SHARED_WORDS];
 
 #endif

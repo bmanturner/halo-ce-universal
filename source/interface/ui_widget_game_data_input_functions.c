@@ -1362,13 +1362,7 @@ static void network_pregame_status_screen_update(
 			short seconds_to_game_start = network_game_client_get_seconds_to_game_start(
 				global_network_game_client_get());
 			boolean waiting_for_machines = (global_network_game_server_get() &&
-				game->machine_count <
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-				(network_game_distributed() ? 1 : 2)
-#else
-				2
-#endif
-			);
+				game->machine_count < 2);
 
 			ustrncpy(countdown_text->parameters.text_box.text, L"-:--", 15);
 			status_text->visible = TRUE;
@@ -2029,7 +2023,7 @@ static void set_textbox_to_build_number(
 	static wchar_t build_number_string[64];
 
 #ifndef HALO_IOS
-	/* The iOS menu leaves this developer build label blank. Save and map
+	/* port: The iOS menu leaves this developer build label blank. Save and map
 	   version checks still use their original build numbers. */
 	if (!build_number_string[0])
 	{

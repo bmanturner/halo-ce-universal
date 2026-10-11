@@ -260,9 +260,6 @@ symbols in this file:
 #include "networking/network_game_protocol.h"
 #include "networking/network_messages.h"
 #include "networking/network_server_manager_internal.h"
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-#include "network_migration.h"
-#endif
 #include "networking/network_server_message_handler.h"
 #include "text/unicode.h"
 /* system_milliseconds(), for the settings update interval */
@@ -785,18 +782,6 @@ boolean network_game_server_send_game_settings_to_client_machine(
 	struct message_server_game_settings_update message;
 	long offset;
 
-#ifdef HALO_IOS_BROWSER
-    byte legacy_game[HALO_PORT_NETWORK_GAME_SIZE];
-    int host_ios_browser_mode(void);
-    if(host_ios_browser_mode() && game_size==sizeof(struct network_game)) {
-        csmemcpy(legacy_game,game,HALO_PORT_NETWORK_GAME_VARIANT_OPTIONS_OFFSET);
-        csmemcpy(legacy_game+HALO_PORT_NETWORK_GAME_VARIANT_OPTIONS_OFFSET,
-            (byte const *)game+HALO_PORT_NETWORK_GAME_LOCAL_DATA_OFFSET,
-            sizeof(((struct network_game *)0)->local_data));
-        game=legacy_game;game_size-=sizeof(struct game_variant_options);
-    }
-#endif
-
 	for (offset = 0; offset < game_size; offset += sizeof(message.data))
 	{
 		void *encoded_message;
@@ -1083,18 +1068,6 @@ boolean network_game_server_send_game_settings_to_all_machines(
 	/* every piece goes out even if one fails for a machine: the others
 	would otherwise keep the old settings (a machine whose connection failed
 	is closed, and is skipped when the update is sent again) */
-#ifdef HALO_IOS_BROWSER
-    byte legacy_game[HALO_PORT_NETWORK_GAME_SIZE];
-    int host_ios_browser_mode(void);
-    if(host_ios_browser_mode() && game_size==sizeof(struct network_game)) {
-        csmemcpy(legacy_game,game,HALO_PORT_NETWORK_GAME_VARIANT_OPTIONS_OFFSET);
-        csmemcpy(legacy_game+HALO_PORT_NETWORK_GAME_VARIANT_OPTIONS_OFFSET,
-            (byte const *)game+HALO_PORT_NETWORK_GAME_LOCAL_DATA_OFFSET,
-            sizeof(((struct network_game *)0)->local_data));
-        game=legacy_game;game_size-=sizeof(struct game_variant_options);
-    }
-#endif
-
 	for (offset = 0; offset < game_size; offset += sizeof(message.data))
 	{
 		void *encoded_message;
@@ -1191,10 +1164,6 @@ boolean network_game_server_handle_client_message(
 		0xCF,
 		server && machine && message && (message_buffer_size == GET_MESSAGE_SIZE(*message)));
 
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-	if (GET_MESSAGE_TYPE(*message) == 2 && network_game_server_handle_migration(server, machine, message, message_buffer_size))
-		return TRUE;
-#endif
 	message_type = (byte)GET_MESSAGE_TYPE(*message);
 	if (GET_MESSAGE_FLAGS(*message))
 	{

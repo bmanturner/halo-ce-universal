@@ -1,1379 +1,721 @@
 /*
 APP.JS
 
-The page of the web port (port/web/README.md): it checks that the browser
-can run the game, copies the game data out of the player's disc image
-(xiso-worker.js), then starts the game (halo.js and halo.wasm, built by
-`ninja web`) and serves it on the main thread:
+The launcher page (index.html): it checks that the browser can run the game,
+copies the game data in from the player's disc image (xiso-worker.js), and
+starts the game (halo.js and halo.wasm: tools/web_build.py), whose canvas
+then fills the page.
 
-- each frame the game's thread posts as an ImageBitmap or RGBA pixel buffer
-  goes onto the canvas (Module.haloPresent);
-- each animation frame advances a counter the game waits on, polls the
-  controllers (input.js) and gives the game the canvas's size;
-- the game's sound plays through an AudioWorklet (audio-worklet.js).
+- The game's threads need SharedArrayBuffer, so a cross-origin isolated
+  page: GitHub Pages cannot send the headers for it, the service worker
+  (sw.js) adds them, and the first visit loads the page once more under it.
+- The game reads its maps, and keeps its saved games, config.toml and
+  debug.txt, in the Origin Private File System (port/web/src/web_main.c
+  mounts it at /data). Each origin has its own: the github.io address and
+  the site's own domain do not share them.
+- Query parameters, for testing: ?set=NAME=value (any number) passes a
+  setting's environment variable (port/linux/README.md, the settings
+  table), ?room=<secret> joins a room (net.js; ?brokers= names other
+  message brokers, for internet play's signalling too), ?menu=<screen> opens
+  a menu screen (debug.menu_open), ?map=<level> starts a level (a10, or
+  levels\a10\a10: the init.txt the game reads, which the page removes again
+  the next time), ?play starts the game at once when it can.
+- ?join=<invite> (a halo://join/ link's code, which native builds and the
+  game here make: port/linux/src/p2p.c) joins that internet game once the
+  game starts.
 */
 
 'use strict';
 
-(() => {
-  const $ = (id) => document.getElementById(id);
-  // the WebAssembly memory the build expects (tools/web_build.py
-  // WEB_MEMORY_BYTES): the Xbox memory window ends at 0x88000000
-  const MEMORY_PAGES = 0x88000000 / 65536;
-  const REQUIRED_BYTES = 2.1e9;
-  const DEFAULT_ROOM = window.HALO_BROWSER_CONFIG?.defaultRoom ?? 'FQLX01';
-  const QUICK_MAPS = ['ui.map', 'beavercreek.map'];
-  const diagnosticOptions = new URLSearchParams(location.search);
-  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) ||
-    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  const pixelFrames = diagnosticOptions.get('frame_transport') === 'rgba' ||
-    (diagnosticOptions.get('frame_transport') !== 'bitmap' &&
-      /Macintosh/.test(navigator.userAgent) && /Chrome|Chromium|Edg\//.test(navigator.userAgent));
+const $ = (id) => document.getElementById(id);
+const params = new URLSearchParams(location.search);
+// the Xbox window ends the game's memory: tools/web_build.py WEB_MEMORY_BYTES
+const WEB_MEMORY_BYTES = 0x88000000;
+const MAXIMUM_LOG_LINES = 20000;
 
-  const state = {
-    memory: null,
-    audio: null,
-    started: false,
-    shared: null,
-    offsets: null,
-    log: [],
-    wakeLock: null,
-    version: null,
-    invite: null,
-    gateway: null,
-    gatewayInstalled: false,
-    inviteConnecting: false,
-    inviteAttempt: 0,
-    nativeInstalling: false,
-    pendingInviteConnect: null,
-    roomTask: Promise.resolve(),
-    maps: null,
-    dataBusy: false,
-    dataTransition: false,
-    releaseGameLock: null,
-    checksReady: false,
-    manualMode: new URLSearchParams(location.search).get('menu') === '1',
-    manualRequested: false,
-    selectedRoom: null,
-    quickController: null,
-    quickFailed: false,
-    quickRole: null,
-    quickPhase: null,
-    audioStarted: false,
-    roomSettingsOpen: false,
-  };
+// ---------- the log: the game's output, for the player to send
 
-  // ---------- settings (this browser's; nothing else depends on them)
+const log = [];
 
-  const coarsePointer = matchMedia('(pointer: coarse)').matches;
-  const settings = { touch: coarsePointer, touchFps: false, look: 1.4, vsync: true, glDebug: false, renderHeight: ios || pixelFrames ? 480 : 720 };
+function logLine(text) {
+  for (const line of String(text).replace(/\r/g, '').split('\n')) {
+    if (line === '') continue;
+    log.push(line);
+  }
+  if (log.length > MAXIMUM_LOG_LINES) log.splice(0, log.length - MAXIMUM_LOG_LINES);
+}
+
+function download(name, blob) {
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = name;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+}
+
+async function readStorageText(name) {
   try {
-    Object.assign(settings, JSON.parse(localStorage.getItem('halo-web-settings') || '{}'));
-  } catch { /* private browsing: the defaults */ }
-  if (![480, 720, 1080, 1440].includes(Number(settings.renderHeight))) settings.renderHeight = ios || pixelFrames ? 480 : 720;
-
-  function saveSettings() {
-    try { localStorage.setItem('halo-web-settings', JSON.stringify(settings)); } catch { /* not kept */ }
+    const root = await navigator.storage.getDirectory();
+    const file = await (await root.getFileHandle(name)).getFile();
+    return await file.text();
+  } catch {
+    return null;
   }
+}
 
-  // ---------- log
-
-  function log(line) {
-    const text = String(line);
-    state.log.push(text);
-    if (state.log.length > 2000) state.log.splice(0, state.log.length - 2000);
-    console.log(text);
+async function downloadLog() {
+  let text = `OpenCE web ${JSON.stringify(stamp)}\n${navigator.userAgent}\n\n` + log.join('\n') + '\n';
+  // (debug.txt, which the game writes, when it is not open: before or after
+  // a game)
+  if (!gameStarted || gameStopped) {
+    const debug = await readStorageText('debug.txt');
+    if (debug) text += '\n---------- debug.txt\n' + debug.slice(-2000000);
   }
+  download('opence-web-log.txt', new Blob([text], { type: 'text/plain' }));
+}
 
-  async function debugFile() {
-    try {
-      // WasmFS mounts OPFS at /data; reused Apollo maps run from /data/halo/data.
-      const directories = (state.maps?.dataRoot || '/data').split('/').filter(Boolean);
-      if (directories.shift() !== 'data') return '';
-      let root = await navigator.storage.getDirectory();
-      for (const directory of directories) root = await root.getDirectoryHandle(directory);
-      return await (await root.getFileHandle('debug.txt')).getFile();
-    } catch {
-      return null;
+// ---------- errors: the game's own, not a browser extension's
+
+function isExtensionNoise(message, source) {
+  const text = String(message || '') + ' ' + String(source || '');
+  return /chrome-extension:|moz-extension:|safari-extension:|MetaMask|ethereum/i.test(text);
+}
+
+window.addEventListener('error', (event) => {
+  if (isExtensionNoise(event.message, event.filename)) return;
+  logLine('page error: ' + (event.error && event.error.stack ? event.error.stack : event.message));
+});
+window.addEventListener('unhandledrejection', (event) => {
+  const reason = event.reason;
+  const text = reason && reason.stack ? reason.stack : String(reason);
+  if (isExtensionNoise(text)) return;
+  logLine('page error: ' + text);
+});
+
+// ---------- the build (version.json) and its updates
+
+let stamp = {};
+
+async function loadStamp() {
+  try {
+    stamp = await (await fetch('version.json', { cache: 'no-cache' })).json();
+  } catch {
+    stamp = {};
+  }
+  $('about-build').textContent = stamp.build ? `${stamp.build} (${stamp.flavor})` : `local (${stamp.flavor || 'unknown'})`;
+  $('about-commit').textContent = stamp.commit ? stamp.commit.slice(0, 12) : '–';
+  $('about-network').textContent = stamp.network_version != null ? String(stamp.network_version) : '–';
+}
+
+async function checkForUpdate() {
+  if (!navigator.serviceWorker || !navigator.serviceWorker.controller || !stamp.version) return;
+  try {
+    const latest = await (await fetch('version.json?latest', { cache: 'no-store' })).json();
+    if (latest.version && latest.version !== stamp.version) {
+      $('update-text').textContent = latest.build ? `Build ${latest.build} is out.` : 'A new build is out.';
+      $('update').hidden = false;
     }
+  } catch {
+    // offline: the build there is plays
   }
-
-  async function debugText() {
-    const file = await debugFile();
-    if (!file) return '';
-    if (!file.stream || file.size <= 200000 || file.size === undefined) return file.text();
-    // Scan the entire file in bounded chunks. Timeout spam must not erase
-    // the earlier disconnect/adoption receipts needed to diagnose a match.
-    const reader = file.stream().getReader(), decoder = new TextDecoder();
-    let carry = '', head = '', tail = '', important = '', timeouts = 0, firstTimeout = '', lastTimeout = '';
-    const collect = line => {
-      if (head.length < 5000) head = (head + line + '\n').slice(0, 5000);
-      tail = (tail + line + '\n').slice(-50000);
-      if (line.includes('timeout in network_connection_idle')) {
-        if (!timeouts) firstTimeout = line;
-        lastTimeout = line; timeouts++;
-      } else if (!line.includes('network_connection_idle() failed in network_game_client_idle_ingame()') &&
-          /migration|reattach|adopted the live match|checkpoint|epoch|out.of.sync|connection.*(?:fail|lost|timed|went)|machine.*(?:remov|accept|connect)/i.test(line)) {
-        important = (important + line + '\n').slice(-140000);
-      }
-    };
-    try {
-      for (;;) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        carry += decoder.decode(value, { stream: true });
-        let end;
-        while ((end = carry.indexOf('\n')) >= 0) { collect(carry.slice(0, end)); carry = carry.slice(end + 1); }
-        if (carry.length > 200000) carry = carry.slice(-200000);
-      }
-      carry += decoder.decode();
-      if (carry) collect(carry);
-    } finally { reader.releaseLock(); }
-    return `Scanned ${file.size} bytes; selected connection events and recent tail below.\n` +
-      `--- start ---\n${head}\n--- connection events ---\n${important}` +
-      (timeouts ? `\nConnection idle timeouts: ${timeouts}\nFirst: ${firstTimeout}\nLast: ${lastTimeout}\n` : '') +
-      `\n--- recent tail ---\n${tail}`;
-  }
-
-  async function fullLog() {
-    const debug = await debugText();
-    return `${navigator.userAgent}\n\n--- page and console ---\n${state.log.join('\n')}` +
-      (debug ? `\n\n--- debug.txt ---\n${debug}` : '');
-  }
-
-  function toast(text, milliseconds = 3500) {
-    const element = $('toast');
-    element.textContent = text;
-    element.hidden = false;
-    clearTimeout(toast.timer);
-    toast.timer = setTimeout(() => { element.hidden = true; }, milliseconds);
-  }
-
-  async function fatal(text) {
-    log('fatal: ' + text);
-    $('fatal-text').textContent = text;
-    $('fatal').hidden = false;
-    document.body.classList.remove('playing');
-  }
-
-  // ---------- checks
-
-  function addCheck(ok, text, level) {
-    const element = document.createElement('div');
-    element.className = 'check' + (ok ? '' : level === 'warn' ? ' warn' : ' bad');
-    element.textContent = text;
-    $('checks').appendChild(element);
-    return ok;
-  }
-
-  async function ensureIsolation() {
-    if (!('serviceWorker' in navigator)) return;
-    try {
-      await navigator.serviceWorker.register('sw.js');
-    } catch (error) {
-      log('service worker: ' + error);
-      return;
-    }
-    if (window.crossOriginIsolated) return;
-    await navigator.serviceWorker.ready;
-    // the service worker serves the page with the isolation headers from
-    // its next load on
-    let reloaded = false;
-    try { reloaded = sessionStorage.getItem('halo-web-isolation') === '1'; } catch { /* none */ }
-    if (!reloaded) {
-      try { sessionStorage.setItem('halo-web-isolation', '1'); } catch { /* none */ }
-      location.reload();
-      await new Promise(() => {});
-    }
-  }
-
-  function webgl2InWorkers() {
-    try {
-      return typeof OffscreenCanvas !== 'undefined' && !!new OffscreenCanvas(1, 1).getContext('webgl2');
-    } catch {
-      return false;
-    }
-  }
-
-  async function checkGameStorage() {
-    if (!navigator.storage?.getDirectory) {
-      return addCheck(false, 'Game storage is unavailable in this browser. Open this page in an up-to-date Safari or Chrome.');
-    }
-    try {
-      // Safari exposes this API even when it refuses OPFS access (for
-      // example in Private Browsing). Test access before reserving memory.
-      await navigator.storage.getDirectory();
-      return addCheck(true, 'Game file storage (OPFS)');
-    } catch (error) {
-      log('game storage: ' + (error?.stack || error));
-      return addCheck(false, 'Game storage could not be opened. In Safari, open this link in a regular tab ' +
-        'instead of Private Browsing. If you are already in a regular tab, close other Halo tabs and restart Safari.');
-    }
-  }
-
-  async function runChecks() {
-    let ok = true;
-    ok = addCheck(window.crossOriginIsolated && typeof SharedArrayBuffer !== 'undefined',
-      window.crossOriginIsolated ? 'Threads (SharedArrayBuffer)' :
-        'Threads: this page is not cross-origin isolated. Reload it; if this stays, the browser is too old.') && ok;
-    ok = addCheck(webgl2InWorkers(), 'WebGL 2 from a worker (OffscreenCanvas; iOS 17 or later)') && ok;
-    ok = await checkGameStorage() && ok;
-    // Reserve the Xbox address window only after Play owns the game lock.
-    // Downloads, idle launchers and a second tab need no game-sized memory.
-    ok = addCheck(typeof WebAssembly !== 'undefined' && typeof WebAssembly.Memory === 'function', 'WebAssembly memory') && ok;
-    if (navigator.storage && navigator.storage.estimate) {
-      try {
-        const estimate = await navigator.storage.estimate();
-        const free = (estimate.quota || 0) - (estimate.usage || 0);
-        $('storage-summary').textContent = `Storage: ${(estimate.usage / 1e9).toFixed(2)} GB used of ` +
-          `${(estimate.quota / 1e9).toFixed(1)} GB this site may use.`;
-        state.freeBytes = free;
-      } catch { /* unknown */ }
-    }
-    return ok;
-  }
-
-  // ---------- game data
-
-  function requiredMaps() {
-    // Desktop invites can name any map. Only browser quick play fixes the
-    // match to Beaver Creek; the full menu retains all supported scenarios.
-    return !state.manualMode && state.selectedRoom && !state.invite ? QUICK_MAPS : HaloCache.expected;
-  }
-
-  function hasFullMaps() {
-    return !!state.maps && HaloCache.expected.every(name => state.maps.files.includes(name));
-  }
-
-  async function mapsState() {
-    return HaloCache.mapsState({ required: requiredMaps() });
-  }
-
-  function updatePlayButton() {
-    const automatic = !state.manualMode && !!(state.invite || state.selectedRoom);
-    $('play').hidden = automatic;
-    $('play').textContent = 'Play main menu';
-    $('play').disabled = state.started || (!automatic && (!state.maps || state.dataBusy));
-  }
-
-  function showSteps(maps) {
-    state.maps = maps;
-    $('step-data').hidden = !!maps;
-    $('step-play').hidden = !maps;
-    if (maps) {
-      $('data-summary').textContent = `Game data: ${maps.files.length} maps, ${(maps.bytes / 1e9).toFixed(2)} GB.`;
-    }
-    updatePlayButton();
-    connectPendingInvite();
-    maybeQuickPlay();
-  }
-
-  function connectPendingInvite() {
-    if (hasFullMaps() && !state.dataBusy && state.pendingInviteConnect && !state.dataTransition) {
-      const connect = state.pendingInviteConnect;
-      state.pendingInviteConnect = null;
-      connect();
-    }
-  }
-
-  function setDataBusy(busy) {
-    state.dataBusy = busy;
-    $('iso-file').disabled = busy;
-    $('delete-data').disabled = busy;
-    updatePlayButton();
-    connectPendingInvite();
-    maybeQuickPlay();
-  }
-
-  function extract(file) {
-    return new Promise((resolve, reject) => {
-      const worker = new Worker('xiso-worker.js');
-      const started = Date.now();
-      $('progress').hidden = false;
-      worker.onmessage = (event) => {
-        const message = event.data;
-        if (message.type === 'progress') {
-          const fraction = message.total ? message.done / message.total : 0;
-          $('progress-fill').style.width = (fraction * 100).toFixed(1) + '%';
-          const seconds = (Date.now() - started) / 1000;
-          const rate = message.done / Math.max(seconds, 0.1);
-          const left = rate > 0 ? (message.total - message.done) / rate : 0;
-          $('progress-text').textContent = `Copying maps/${message.file}: ` +
-            `${(message.done / 1e9).toFixed(2)} of ${(message.total / 1e9).toFixed(2)} GB` +
-            (seconds > 3 ? `, about ${Math.ceil(left / 60)} min left` : '');
-        } else if (message.type === 'done') {
-          worker.terminate();
-          resolve(message);
-        } else if (message.type === 'error') {
-          worker.terminate();
-          reject(new Error(message.message));
-        }
-      };
-      worker.onerror = (event) => {
-        worker.terminate();
-        reject(new Error(event.message || 'The copy stopped.'));
-      };
-      worker.postMessage({ file });
-    });
-  }
-
-  async function onImageChosen(event) {
-    const file = event.target.files && event.target.files[0];
-    event.target.value = '';
-    if (!file) return;
-    if (state.freeBytes !== undefined && state.freeBytes < REQUIRED_BYTES) {
-      toast('There may not be enough free storage for the game data (about 1.8 GB).', 6000);
-    }
-    if (navigator.storage && navigator.storage.persist) {
-      // keep the data when the device runs low on space
-      navigator.storage.persist().catch(() => {});
-    }
-    setDataBusy(true);
-    try {
-      const result = await HaloCache.withLock(() => extract(file));
-      log(`extracted ${result.files} files, ${result.bytes} bytes`);
-      showSteps(await mapsState());
-      $('progress-text').textContent = state.maps ? 'Done. Maps are ready to play.' :
-        'This disc image does not contain the maps needed for this mode.';
-    } catch (error) {
-      $('progress-text').textContent = error.message;
-      log('extraction failed: ' + error.message);
-    } finally {
-      setDataBusy(false);
-    }
-  }
-
-  // ---------- saved games: a .zip of the save folder (stored, not compressed)
-
-  const crcTable = (() => {
-    const table = new Uint32Array(256);
-    for (let n = 0; n < 256; n++) {
-      let c = n;
-      for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
-      table[n] = c >>> 0;
-    }
-    return table;
-  })();
-
-  function crc32(bytes) {
-    let crc = 0xFFFFFFFF;
-    for (let i = 0; i < bytes.length; i++) crc = crcTable[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
-    return (crc ^ 0xFFFFFFFF) >>> 0;
-  }
-
-  function zip(files) {
-    const encoder = new TextEncoder();
-    const parts = [];
-    const central = [];
-    let offset = 0;
-    for (const { name, bytes } of files) {
-      const nameBytes = encoder.encode(name);
-      const crc = crc32(bytes);
-      const local = new DataView(new ArrayBuffer(30));
-      local.setUint32(0, 0x04034b50, true);
-      local.setUint16(4, 20, true);
-      local.setUint32(14, crc, true);
-      local.setUint32(18, bytes.length, true);
-      local.setUint32(22, bytes.length, true);
-      local.setUint16(26, nameBytes.length, true);
-      parts.push(new Uint8Array(local.buffer), nameBytes, bytes);
-      const entry = new DataView(new ArrayBuffer(46));
-      entry.setUint32(0, 0x02014b50, true);
-      entry.setUint16(4, 20, true);
-      entry.setUint16(6, 20, true);
-      entry.setUint32(16, crc, true);
-      entry.setUint32(20, bytes.length, true);
-      entry.setUint32(24, bytes.length, true);
-      entry.setUint16(28, nameBytes.length, true);
-      entry.setUint32(42, offset, true);
-      central.push(new Uint8Array(entry.buffer), nameBytes);
-      offset += 30 + nameBytes.length + bytes.length;
-    }
-    const centralSize = central.reduce((sum, part) => sum + part.length, 0);
-    const end = new DataView(new ArrayBuffer(22));
-    end.setUint32(0, 0x06054b50, true);
-    end.setUint16(8, files.length, true);
-    end.setUint16(10, files.length, true);
-    end.setUint32(12, centralSize, true);
-    end.setUint32(16, offset, true);
-    return new Blob([...parts, ...central, new Uint8Array(end.buffer)], { type: 'application/zip' });
-  }
-
-  async function exportSaves() {
-    const files = [];
-    async function walk(directory, prefix) {
-      for await (const [name, handle] of directory.entries()) {
-        if (handle.kind === 'directory') await walk(handle, prefix + name + '/');
-        else files.push({ name: prefix + name, bytes: new Uint8Array(await (await handle.getFile()).arrayBuffer()) });
-      }
-    }
-    try {
-      const maps = state.maps || await mapsState();
-      const savePath = (maps?.saveRoot || '/data/save').split('/').slice(2);
-      await walk(await HaloCache.directory(savePath), 'save/');
-      try {
-        const dataPath = (maps?.dataRoot || '/data').split('/').slice(2);
-        const config = await (await (await HaloCache.directory(dataPath)).getFileHandle('config.toml')).getFile();
-        files.push({ name: 'config.toml', bytes: new Uint8Array(await config.arrayBuffer()) });
-      } catch { /* none yet */ }
-    } catch {
-      toast('There are no saved games yet.');
-      return;
-    }
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(zip(files));
-    link.download = 'halo-saves.zip';
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(link.href), 60000);
-  }
-
-  async function deleteData() {
-    if (state.dataBusy || state.started) return;
-    if (!confirm('Delete the game data (the maps folder)? Saved games are kept.')) return;
-    try {
-      await HaloCache.withLock(async () => {
-        for (const path of [[], ['halo', 'data']]) {
-          let folder;
-          try { folder = await HaloCache.directory(path); }
-          catch (error) { if (error.name === 'NotFoundError') continue; throw error; }
-          for (const name of ['maps', 'maps.json']) {
-            try { await folder.removeEntry(name, { recursive: true }); }
-            catch (error) { if (error.name !== 'NotFoundError') throw error; }
-          }
-        }
-      });
-    } catch (error) { toast(error.message, 6000); return; }
-    showSteps(await mapsState());
-    setDataBusy(false);
-  }
-
-  // ---------- the running game
-
-  function quickStatus(phase, message) {
-    state.quickPhase = phase;
-    $('quick-status').textContent = message;
-    $('quick-game-status').textContent = message;
-    $('quick-panel').dataset.state = phase;
-    $('quick-panel').hidden = !state.started || phase === 'playing' || phase === 'menu';
-    $('quick-retry').hidden = phase !== 'error' || state.started;
-  }
-
-  function cancelQuickPlay() {
-    state.quickController?.abort();
-    state.quickController = null;
-    HaloNet.cancelQuickPlay();
-  }
-
-  function showRoomSettings(open) {
-    state.roomSettingsOpen = open;
-    document.body.classList[open ? 'add' : 'remove']('room-settings');
-    $('room-toggle').hidden = open || !state.started || !!state.invite;
-    $('room-close').hidden = !open;
-    HaloInput.setUIActive(open);
-    if (open && document.pointerLockElement) document.exitPointerLock();
-  }
-
-  async function maybeQuickPlay() {
-    if (!state.checksReady || state.started || state.dataBusy || state.dataTransition || !state.maps) return;
-    if (state.manualMode) {
-      if (state.manualRequested) {
-        state.manualRequested = false;
-        await play({ userGesture: false });
-      }
-      return;
-    }
-    if (state.quickController || state.quickFailed) return;
-    if (state.invite) {
-      if (!hasFullMaps()) return;
-      if (!state.gatewayInstalled || !state.gateway?.connected) {
-        quickStatus('waiting', 'Waiting for the invited host…');
-        return;
-      }
-      state.quickRole = 'join';
-      quickStatus('joining', 'Joining the invited match…');
-      await play({ role: 'join', target: state.gateway.hostAddress });
-      return;
-    }
-    const room = HaloNet.status().room;
-    if (!room || room !== state.selectedRoom) return;
-    const controller = new AbortController();
-    state.quickController = controller;
-    quickStatus('waiting', 'Connecting to the room and finding a match…');
-    try {
-      const selection = await HaloNet.quickPlay({ signal: controller.signal, onStatus(status) {
-        if (controller.signal.aborted) return;
-        log(`network ${new Date().toISOString()}: ${status.state}: ${status.message}`);
-        if (typeof status.hold === 'boolean') window.Module?._web_quick_play_hold?.(status.hold ? 1 : 0);
-        if (!controller.signal.aborted && (!state.started || ['recovering', 'reconnecting', 'error'].includes(status.state)))
-          quickStatus(status.state, status.message);
-      }, onReconnect(selection) {
-        if (controller.signal.aborted || state.manualMode || state.invite || !state.started ||
-            selection.room !== state.selectedRoom) return;
-        const reconnect = window.Module?._web_quick_play_reconnect;
-        if (!reconnect) {
-          quickStatus('error', 'Player reconnection needs the latest game build. Reload and choose Update.');
-          return;
-        }
-        log(`network ${new Date().toISOString()}: client reattach, epoch ${selection.epoch}, host ${HaloNet.addressText(selection.hostAddress)}`);
-        quickStatus('reconnecting', 'Reconnecting your player. The match continues on the current host…');
-        reconnect(selection.hostAddress, selection.epoch);
-      }, onFailover(selection) {
-        if (controller.signal.aborted || state.manualMode || state.invite ||
-            !state.started || selection.room !== state.selectedRoom) return;
-        log(`network ${new Date().toISOString()}: replacement ${selection.role}, epoch ${selection.epoch}, host ${HaloNet.addressText(selection.hostAddress)}`);
-        const migrate = window.Module?._web_quick_play_migrate;
-        if (!migrate) {
-          quickStatus('error', 'Host recovery needs the latest game build. Reload and choose Update.');
-          cancelQuickPlay();
-          return;
-        }
-        state.quickRole = selection.role;
-        quickStatus('recovering', selection.role === 'host' ?
-          'You are the replacement host. Preserving the match…' : 'Reconnecting to the replacement host. Preserving the match…');
-        migrate(selection.role === 'host' ? 1 : 2, selection.hostAddress, selection.epoch);
-      } });
-      if (controller.signal.aborted || state.manualMode || state.started || state.selectedRoom !== selection.room) return;
-      state.quickRole = selection.role;
-      state.quickEpoch = selection.epoch;
-      quickStatus(selection.role === 'host' ? 'hosting' : 'joining', selection.role === 'host' ?
-        'Starting a match. Keep this game open so others can join.' : 'Joining the room’s match…');
-      await play({ role: selection.role, target: selection.hostAddress });
-    } catch (error) {
-      if (controller.signal.aborted) return;
-      state.quickFailed = true;
-      cancelQuickPlay();
-      quickStatus('error', error.message || 'Could not connect to a match. Retry or open the main menu.');
-    }
-  }
-
-  function openMainMenu() {
-    if (state.roomSettingsOpen) showRoomSettings(false);
-    const unrecoverable = !$('fatal').hidden;
-    state.inviteAttempt++;
-    state.pendingInviteConnect = null;
-    state.inviteConnecting = false;
-    state.manualMode = true;
-    state.manualRequested = true;
-    state.quickFailed = false;
-    cancelQuickPlay();
-    quickStatus('menu', 'Main menu selected.');
-    updatePlayButton();
-    unlockInteraction();
-    if (!hasFullMaps()) {
-      // The running engine owns the OPFS game lock. Reload before importing
-      // maps for the full menu.
-      state.dataTransition = true;
-      const url = new URL(location.href);
-      url.searchParams.set('menu', '1');
-      url.hash = '';
-      location.href = url.toString();
-      return;
-    }
-    if (state.started || state.nativeInstalling) {
-      if (!unrecoverable && !state.nativeInstalling && window.Module?._web_quick_play_cancel) window.Module._web_quick_play_cancel();
-      else {
-        state.dataTransition = true;
-        const url = new URL(location.href);
-        url.searchParams.set('menu', '1');
-        location.href = url.toString();
-      }
-    } else if (state.maps && !state.dataBusy) {
-      state.manualRequested = false;
-      return play({ userGesture: true });
-    } else maybeQuickPlay();
-  }
-
-  function makeAudioContext() {
-    if (state.audio) return;
-    try {
-      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      state.audio = new AudioContextClass({ sampleRate: 48000, latencyHint: 'interactive' });
-    } catch (error) { log('audio context: ' + error); }
-  }
-
-  function unlockInteraction(userGesture = true) {
-    makeAudioContext();
-    state.audio?.resume().catch(() => {});
-    if (state.started && userGesture) {
-      const root = document.documentElement;
-      if (root.requestFullscreen && !navigator.standalone) root.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
-      if (screen.orientation?.lock) screen.orientation.lock('landscape').catch(() => {});
-      const canvas = $('screen');
-      if (canvas.requestPointerLock && matchMedia('(pointer: fine)').matches) {
-        try { canvas.requestPointerLock()?.catch(() => {}); } catch { /* unsupported */ }
-      }
-    }
-    if (state.shared && !state.audioStarted) startAudio();
-  }
-
-  function landscapeSize() {
-    const scale = Math.min(window.devicePixelRatio || 1, 2);
-    const long = Math.max(window.innerWidth, window.innerHeight);
-    const short = Math.min(window.innerWidth, window.innerHeight);
-    let width = Math.round(long * scale);
-    let height = Math.round(short * scale);
-    // Bound render targets and transferred frame surfaces independently of
-    // Retina/4K desktop size. Settings and diagnostics can opt into more detail.
-    const requestedHeight = Number(diagnosticOptions.get('render_height'));
-    const maximumHeight = Number.isFinite(requestedHeight) && requestedHeight > 0 ?
-      Math.max(480, Math.min(1440, Math.round(requestedHeight))) : Number(settings.renderHeight);
-    if (height > maximumHeight) {
-      width = Math.round(width * maximumHeight / height);
-      height = maximumHeight;
-    }
-    return { width: width & ~1, height: height & ~1 };
-  }
-
-  function presentationStats(canvas) {
-    if (diagnosticOptions.get('fps') !== '1') return null;
-    const output = document.createElement('output');
-    output.id = 'performance-stats';
-    output.style.cssText = 'position:fixed;top:max(8px,env(safe-area-inset-top));' +
-      'left:max(8px,env(safe-area-inset-left));z-index:20;padding:4px 8px;' +
-      'font:13px monospace;background:#11161ddd;border-radius:6px;pointer-events:none';
-    output.textContent = 'FPS —';
-    output.title = 'Frames received from the game worker';
-    output.dataset.samples = '[]';
-    document.body.appendChild(output);
-    const samples = [];
-    let frames = 0, previousFrames = 0, previousTime = performance.now();
-    const resetWindow = () => {
-      previousFrames = frames;
-      previousTime = performance.now();
-    };
-    // Neither hidden time nor queued frames delivered while hidden belong
-    // in a visible FPS sample.
-    document.addEventListener('visibilitychange', resetWindow);
-    setInterval(() => {
-      if (document.hidden || !frames) { resetWindow(); return; }
-      const now = performance.now();
-      const windowMs = now - previousTime;
-      if (windowMs < 1000) return;
-      const fps = (frames - previousFrames) * 1000 / windowMs;
-      output.textContent = `${fps.toFixed(1)} FPS`;
-      output.title = `${canvas.width} × ${canvas.height}; frames received from the game worker`;
-      samples.push({ fps: +fps.toFixed(2), frames, ms: Math.round(now),
-        windowMs: +windowMs.toFixed(2), width: canvas.width, height: canvas.height });
-      if (samples.length > 120) samples.shift();
-      output.dataset.samples = JSON.stringify(samples);
-      previousFrames = frames;
-      previousTime = now;
-    }, 1000);
-    return () => {
-      if (!frames) previousTime = performance.now();
-      frames++;
-    };
-  }
-
-  function sharedWord(name) {
-    return (state.shared + state.offsets[name]) >> 2;
-  }
-
-  function readOffsets(module) {
-    const pointer = module._web_shared_offsets();
-    const words = new Int32Array(state.memory.buffer, pointer, 36);
-    const names = ['size', 'eventWrite', 'eventRead', 'events', 'eventSize', 'gamepads', 'gamepadSize',
-      'displayWidth', 'displayHeight', 'frameCounter', 'framesPresented', 'vsync', 'audioRate', 'audioOpen',
-      'audioWrite', 'audioRead', 'audioUnderruns', 'audioRing', 'audioRingFrames', 'pageHidden', 'gameStarted',
-      'eventCapacity', 'gamepadCount', 'netLocalAddress', 'netOutWrite', 'netOutRead', 'netInWrite', 'netInRead',
-      'netOut', 'netOutBytes', 'netIn', 'netInBytes', 'gatewayEnabled', 'gatewayIdentifier',
-      'gatewayPeers', 'gatewayPeerCount'];
-    const offsets = {};
-    names.forEach((name, index) => { offsets[name] = words[index]; });
-    // Cached older runtimes export only the original 36 offsets. Their shared
-    // size must include the appended table before reading its extra offsets.
-    const pingStart = offsets.gatewayPeers + offsets.gatewayPeerCount * 12;
-    if (offsets.size >= pingStart + 20 + 128 * 8) {
-      const pingNames = ['pingSequence', 'pingHost', 'pingEpoch', 'pingUpdated', 'pingCount', 'pingPeers', 'pingPeerCount'];
-      const pingWords = new Int32Array(state.memory.buffer, pointer + 36 * 4, pingNames.length);
-      pingNames.forEach((name, index) => { offsets[name] = pingWords[index]; });
-    }
-    return offsets;
-  }
-
-  function updateDisplaySize() {
-    const i32 = new Int32Array(state.memory.buffer);
-    const { width, height } = landscapeSize();
-    Atomics.store(i32, sharedWord('displayWidth'), width);
-    Atomics.store(i32, sharedWord('displayHeight'), height);
-    $('rotate').hidden = !(state.started && window.innerHeight > window.innerWidth);
-  }
-
-  function animationFrame() {
-    const i32 = new Int32Array(state.memory.buffer);
-    Atomics.add(i32, sharedWord('frameCounter'), 1);
-    Atomics.notify(i32, sharedWord('frameCounter'));
-    HaloInput.pollGamepads();
-    requestAnimationFrame(animationFrame);
-  }
-
-  function onVisibility() {
-    if (!state.shared) return;
-    const i32 = new Int32Array(state.memory.buffer);
-    const hidden = document.hidden ? 1 : 0;
-    Atomics.store(i32, sharedWord('pageHidden'), hidden);
-    Atomics.notify(i32, sharedWord('frameCounter'));
-    if (state.audio) {
-      if (hidden) state.audio.suspend().catch(() => {});
-      else state.audio.resume().catch(() => {});
-    }
-    if (!hidden) requestWakeLock();
-  }
-
-  async function requestWakeLock() {
-    try {
-      if (navigator.wakeLock && !document.hidden) state.wakeLock = await navigator.wakeLock.request('screen');
-    } catch { /* not allowed now */ }
-  }
-
-  async function startAudio() {
-    const context = state.audio;
-    if (!context || state.audioStarted) return;
-    state.audioStarted = true;
-    try {
-      await context.audioWorklet.addModule('audio-worklet.js');
-      const i32 = new Int32Array(state.memory.buffer);
-      const node = new AudioWorkletNode(context, 'halo-audio', {
-        numberOfInputs: 0,
-        numberOfOutputs: 1,
-        outputChannelCount: [2],
-        processorOptions: {
-          buffer: state.memory.buffer,
-          ring: state.shared + state.offsets.audioRing,
-          ringFrames: state.offsets.audioRingFrames,
-          write: state.shared + state.offsets.audioWrite,
-          read: state.shared + state.offsets.audioRead,
-          underruns: state.shared + state.offsets.audioUnderruns,
-          rate: 48000,
-        },
-      });
-      node.connect(context.destination);
-      Atomics.store(i32, sharedWord('audioOpen'), 1);
-      log(`audio: ${context.sampleRate} Hz`);
-    } catch (error) {
-      state.audioStarted = false;
-      log('audio: ' + error);
-      toast('Sound is not available: ' + error.message);
-    }
-  }
-
-  async function play({ role = null, target = null, userGesture = false } = {}) {
-    if (state.started || state.dataBusy || state.dataTransition || !state.maps) return;
-    if (role && state.invite && (!state.gatewayInstalled || !state.gateway?.connected)) {
-      quickStatus('waiting', 'Waiting for the invited host…');
-      return;
-    }
-    state.started = true;
-    unlockInteraction(userGesture);
-    try {
-      if (navigator.locks) {
-        await new Promise((resolve, reject) => {
-          navigator.locks.request('halo-game', { ifAvailable: true }, lock => {
-            if (!lock) { reject(new Error('Halo is open in another tab. Close it, then press Play.')); return; }
-            resolve();
-            return new Promise(release => { state.releaseGameLock = release; });
-          }).catch(reject);
-        });
-      }
-    } catch (error) {
-      state.started = false;
-      state.audio?.close().catch(() => {});
-      state.audio = null;
-      state.quickFailed = true;
-      cancelQuickPlay();
-      quickStatus('error', error.message);
-      updatePlayButton();
-      return;
-    }
-    if (state.dataTransition) {
-      state.releaseGameLock?.();
-      state.releaseGameLock = null;
-      state.started = false;
-      return;
-    }
-    try {
-      state.memory = new WebAssembly.Memory({ initial: MEMORY_PAGES, maximum: MEMORY_PAGES, shared: true });
-    } catch (error) {
-      state.releaseGameLock?.();
-      state.releaseGameLock = null;
-      state.started = false;
-      state.audio?.close().catch(() => {});
-      state.audio = null;
-      state.quickFailed = true;
-      cancelQuickPlay();
-      quickStatus('error', 'The browser could not reserve memory for Halo. Close other Halo tabs or apps and retry.');
-      log('memory: ' + (error?.message || error));
-      updatePlayButton();
-      return;
-    }
-    updatePlayButton();
-    document.body.classList.add('playing');
-    $('room-toggle').hidden = !!state.invite;
-    $('quick-panel').hidden = !role;
-    requestWakeLock();
-    // the system's back gesture or button (Android) backs out of menus, as
-    // the controller's B does, instead of leaving the game
-    history.pushState({ playing: true }, '');
-    window.addEventListener('popstate', () => {
-      HaloInput.pressBack();
-      history.pushState({ playing: true }, '');
-    });
-
-    const canvas = $('screen');
-    const context = canvas.getContext(pixelFrames ? '2d' : 'bitmaprenderer', { alpha: false });
-    const countPresent = presentationStats(canvas);
-    // (tests pass extra --NAME=value settings in window.__haloArgs)
-    const argumentsList = Array.isArray(window.__haloArgs) ? window.__haloArgs.slice() : [];
-    argumentsList.push('--HALO_DATA_ROOT=' + state.maps.dataRoot, '--HALO_SAVE_ROOT=' + state.maps.saveRoot);
-    argumentsList.push('--HALO_WEB_PRESENT_ACK=1');
-    if (pixelFrames) argumentsList.push('--HALO_WEB_PIXEL_FRAMES=1');
-    if (role) {
-      argumentsList.push('--HALO_QUICK_PLAY=' + role);
-      if (role === 'join' && target) argumentsList.push('--HALO_QUICK_PLAY_TARGET=' + HaloNet.addressText(target));
-    }
-    if (diagnosticOptions.get('batch_streams') === '0') argumentsList.push('--HALO_WEB_BATCH_STREAMS=0');
-    if (diagnosticOptions.get('geometry_cache') === '1') argumentsList.push('--HALO_WEB_GEOMETRY_CACHE=1');
-    if (!settings.vsync) argumentsList.push('--HALO_NO_VSYNC=1');
-    if (settings.glDebug) argumentsList.push('--HALO_GL_DEBUG=1');
-
-    window.Module = {
-      wasmMemory: state.memory,
-      arguments: argumentsList,
-      print: (text) => log(text),
-      printErr: (text) => log(text),
-      haloPresent: (bitmap, pendingBuffer) => {
-        try {
-          // A bitmap sent just before the tab was hidden may arrive after
-          // rendering stops. Release it without updating the hidden canvas.
-          if (document.hidden) return;
-          if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
-            canvas.width = bitmap.width;
-            canvas.height = bitmap.height;
-          }
-          if (bitmap.pixels) {
-            context.putImageData(new ImageData(new Uint8ClampedArray(bitmap.pixels), bitmap.width, bitmap.height), 0, 0);
-          } else if (pixelFrames) {
-            // An older cached runtime can still send ImageBitmaps to a newer
-            // launcher until its offered update is applied.
-            context.drawImage(bitmap, 0, 0);
-          } else context.transferFromImageBitmap(bitmap);
-          countPresent?.();
-        } finally {
-          try { bitmap.close?.(); }
-          finally {
-            // Older runtimes send only the bitmap; newer ones bound their
-            // transfer queue with this shared acknowledgement counter.
-            if (pendingBuffer) Atomics.sub(new Int32Array(pendingBuffer), 0, 1);
-          }
-        }
-      },
-      haloMessage: (kind, text) => {
-        if (kind === 0) log('game: ' + text);
-        else if (kind === 6) {
-          try {
-            const status = JSON.parse(text);
-            if (status.phase === 'checkpoint') {
-              HaloNet.quickPlayCheckpoint(status);
-              return;
-            }
-            log(`network ${new Date().toISOString()}: native ${status.phase}: ${status.message}`);
-            if (status.phase === 'disconnected' && !state.invite && !state.manualMode && HaloNet.quickPlayLost()) {
-              quickStatus('recovering', 'Restoring the connection while preserving the match…');
-              return;
-            }
-            const recovering = HaloNet.quickPlayPhase(status.phase);
-            if (recovering) {
-              quickStatus('recovering', 'Choosing a replacement host and preserving the match…');
-              return;
-            }
-            quickStatus(status.phase, status.message);
-            if (status.phase === 'menu' || status.phase === 'error' || status.phase === 'disconnected') {
-              state.quickFailed = status.phase === 'error';
-              state.manualMode = true;
-              cancelQuickPlay();
-              if (!hasFullMaps()) {
-                if (status.phase === 'menu') openMainMenu();
-                else fatal(status.message + ' Reload to retry multiplayer, or choose Main menu and import your disc image.');
-              }
-            }
-          } catch (error) { log('quick play status: ' + error); }
-        }
-        else if (kind === 1) toast(text, 5000);
-        else if (kind === 2) log('clipboard: ' + text);
-        else if (kind === 4) log('thread error: ' + text);
-        else if (kind === 5) {
-          log('game: ' + text);
-          $('fatal').querySelector('h2').textContent = 'The game quit';
-          fatal(text + ' Reload to start it again.');
-        }
-        else fatal(text);
-      },
-      onAbort: (what) => fatal('The game stopped: ' + what),
-      onRuntimeInitialized: () => {
-        const module = window.Module;
-        module._web_quick_play_set_address?.(HaloNet.address);
-        module._web_quick_play_set_epoch?.(state.quickEpoch || 0);
-        state.shared = module._web_shared_state();
-        state.offsets = readOffsets(module);
-        onVisibility();
-        updateDisplaySize();
-        HaloInput.attach({
-          memory: state.memory,
-          base: state.shared,
-          offsets: state.offsets,
-          canvas,
-          touchRoot: $('touch'),
-          touch: settings.touch,
-          touchFps: settings.touchFps === true,
-        });
-        HaloInput.setLookSensitivity(settings.look);
-        HaloNet.attach({ memory: state.memory, base: state.shared, offsets: state.offsets });
-        if (role && !state.invite) HaloNet.quickPlayStarted();
-        $('touch').hidden = !settings.touch;
-        requestAnimationFrame(animationFrame);
-        startAudio();
-        log('runtime ready');
-      },
-    };
-
-    const script = document.createElement('script');
-    script.src = 'halo.js';
-    script.onerror = () => fatal('Could not load halo.js.');
-    document.body.appendChild(script);
-  }
-
-  // ---------- online play (net.js)
-
-  function setUpInvites() {
-    if (!$('invite-input')) return;
-    const relay = window.HALO_BROWSER_CONFIG?.relayUrl || '';
-    const linked = new URLSearchParams(location.hash.slice(1)).get('join');
-    state.invite = linked ? HaloInvite.parse(linked) : null;
-    if (state.invite) $('invite-input').value = 'halo://join/' + state.invite;
-    $('invite-status').textContent = linked && !state.invite ? 'This invite is incomplete or invalid.' :
-      relay ? 'Ready for a desktop invite.' : 'Desktop invites need a relay. This preview does not have a relay configured yet.';
-    $('relay-access-row').hidden = !relay;
-    const connect = async () => {
-      if (state.inviteConnecting || state.gatewayInstalled || state.started) return;
-      const token = HaloInvite.parse($('invite-input').value);
-      if (!token) { $('invite-status').textContent = 'Paste a complete halo://join/ invite.'; return; }
-      cancelQuickPlay();
-      state.quickFailed = false;
-      state.invite = token;
-      $('play').disabled = true;
-      $('browser-rooms').hidden = true;
-      if (!relay) {
-        $('invite-status').textContent = 'The browser link is valid, but this site needs a relay before it can join desktop games.';
-        return;
-      }
-      if (!hasFullMaps() || state.dataBusy) {
-        state.pendingInviteConnect = connect;
-        $('step-data').hidden = false;
-        $('invite-status').textContent = 'Import your disc image to join this host. The invite will connect when all maps are ready.';
-        connectPendingInvite();
-        return;
-      }
-      $('invite-connect').disabled = true;
-      $('invite-input').disabled = true;
-      state.inviteConnecting = true;
-      const attempt = ++state.inviteAttempt;
-      let transport = null;
-      try {
-        transport = await HaloGateway.connect(relay, token, {
-          accessToken: $('relay-access').value,
-          onStatus(status) {
-            if (attempt !== state.inviteAttempt) return;
-            $('invite-status').textContent = status.message;
-            if (status.state === 'error') {
-              if (state.started && !state.manualMode) fatal(status.message + ' Reload to start a new session.');
-              else {
-                state.quickFailed = true;
-                state.gateway = null;
-                state.gatewayInstalled = false;
-                $('invite-connect').disabled = false;
-                $('invite-input').disabled = false;
-                quickStatus('error', status.message);
-              }
-            }
-            updatePlayButton();
-            maybeQuickPlay();
-          },
-        });
-        if (attempt !== state.inviteAttempt) { transport.close(); return; }
-        await state.roomTask;
-        if (attempt !== state.inviteAttempt) { transport.close(); return; }
-        state.nativeInstalling = true;
-        try { await HaloNet.useTransport(transport); }
-        finally { state.nativeInstalling = false; }
-        if (attempt !== state.inviteAttempt) { transport.close(); return; }
-        // A host failure can arrive while leaving the previous browser room.
-        if (transport.closed) throw new Error('The relay session ended. Try connecting again.');
-        state.gateway = transport;
-        state.gatewayInstalled = true;
-        $('online-address').textContent = HaloNet.addressText(state.gateway.address);
-        $('invite-input').disabled = true;
-        $('relay-access').value = '';
-        updatePlayButton();
-        maybeQuickPlay();
-      } catch (error) {
-        transport?.close();
-        if (attempt !== state.inviteAttempt) return;
-        $('invite-status').textContent = error.message;
-        $('invite-connect').disabled = false;
-        $('invite-input').disabled = false;
-      } finally {
-        if (attempt === state.inviteAttempt) {
-          state.inviteConnecting = false;
-          updatePlayButton();
-        }
-      }
-    };
-    $('invite-connect').onclick = connect;
-    $('invite-input').onkeydown = (event) => { if (event.key === 'Enter') connect(); };
-    $('invite-share').onclick = async () => {
-      try {
-        const link = HaloInvite.link(location.href, $('invite-input').value);
-        await navigator.clipboard.writeText(link);
-        toast('Browser invite copied.');
-      } catch (error) { $('invite-status').textContent = error.message; }
-    };
-    if (state.invite) {
-      $('browser-rooms').hidden = true;
-      if (relay && !state.manualMode) connect();
-    }
-  }
-
-  function onlineOptions() {
-    const options = {};
-    if (settings.turnUrl) {
-      options.turn = { urls: settings.turnUrl, username: settings.turnUser || '', credential: settings.turnPassword || '' };
-    }
-    // (tests name their own broker: ?signal=ws://...)
-    const signal = new URLSearchParams(location.search).get('signal');
-    if (signal) options.brokers = [signal];
-    return options;
-  }
-
-  function roomLink(code) {
-    const url = new URL(location.href);
-    url.search = '';
-    url.hash = '';
-    url.searchParams.set('room', code);
-    return url.toString();
-  }
-
-  function showOnline(status) {
-    const inRoom = !!status.room;
-    $('online-join').hidden = false;
-    $('online-room').hidden = !inRoom;
-    $('online-default').disabled = !DEFAULT_ROOM || status.room === DEFAULT_ROOM;
-    maybeQuickPlay();
-    if (!inRoom) return;
-    $('online-code').textContent = status.room;
-    $('room-toggle').textContent = 'Room ' + status.room;
-    const players = status.players === 1 ? '1 other player' : `${status.players} other players`;
-    $('online-status').textContent = status.brokers ? `Connected: ${players} in the room.` :
-      'Looking for the room… (checking the connection)';
-    $('online-names').textContent = status.names.length ? status.names.join(', ') : '';
-  }
-
-  function roomAction(action) {
-    state.roomTask = state.roomTask.then(action).catch(error => toast(error.message));
-    return state.roomTask;
-  }
-
-  function setRoomURL(code) {
-    const url = new URL(location.href);
-    if (code) url.searchParams.set('room', code);
-    else url.searchParams.delete('room');
-    history.replaceState(history.state, '', url);
-  }
-
-  function joinRoom(code, { remember = true, updateURL = true } = {}) {
-    code = String(code || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-    if (code.length < 4 || code.length > 16) {
-      toast('Use a room code with 4–16 letters or digits.');
-      return Promise.resolve();
-    }
-    if (code === state.selectedRoom && code === HaloNet.status().room && !state.manualMode && !state.quickFailed)
-      return state.roomTask;
-    // Quick play is configured once when the engine starts. Changing only
-    // WebRTC rooms would leave its old host/client session running on a new LAN.
-    if (state.started || (state.dataBusy && state.manualMode)) {
-      state.dataTransition = true;
-      try {
-        if (remember) localStorage.setItem('halo-web-room', code);
-        localStorage.removeItem('halo-web-room-left');
-      } catch { /* not kept */ }
-      const url = new URL(location.href);
-      url.searchParams.set('room', code);
-      url.searchParams.delete('menu');
-      url.hash = '';
-      location.href = url.toString();
-      return Promise.resolve();
-    }
-    cancelQuickPlay();
-    state.quickFailed = false;
-    state.selectedRoom = code;
-    if (updateURL) {
-      state.manualMode = false;
-      state.manualRequested = false;
-      const url = new URL(location.href);
-      url.searchParams.delete('menu');
-      history.replaceState(history.state, '', url);
-    }
-    $('online-share').disabled = true;
-    return roomAction(async () => {
-      const joined = await HaloNet.join(code, onlineOptions());
-      try {
-        if (remember) localStorage.setItem('halo-web-room', joined);
-        localStorage.removeItem('halo-web-room-left');
-      } catch { /* not kept */ }
-      if (updateURL) setRoomURL(joined);
-      $('online-share').disabled = joined !== state.selectedRoom;
-      updatePlayButton();
-      if (state.checksReady && !state.maps) showSteps(await mapsState());
-      else maybeQuickPlay();
-    });
-  }
-
-  function setUpOnline() {
-    HaloNet.on((type, detail) => {
-      if (type === 'diagnostic') log(`network ${new Date().toISOString()}: ${JSON.stringify(detail)}`);
-      if (type === 'status') showOnline(detail);
-      if (type === 'joined') toast(`${detail.name} joined the room.`);
-      if (type === 'left') toast(`${detail.name} left the room.`);
-    });
-    let name = '';
-    try { name = localStorage.getItem('halo-web-player-name') || ''; } catch { /* none */ }
-    $('online-name').value = name;
-    $('online-name').onchange = (event) => {
-      try { localStorage.setItem('halo-web-player-name', event.target.value.trim().slice(0, 24)); } catch { /* none */ }
-    };
-    $('online-create').onclick = () => joinRoom(HaloNet.newRoomCode());
-    $('online-default-room').hidden = !DEFAULT_ROOM;
-    $('online-default-code').textContent = DEFAULT_ROOM;
-    $('online-default').onclick = () => { if (DEFAULT_ROOM) return joinRoom(DEFAULT_ROOM); };
-    $('online-enter').onclick = () => joinRoom($('online-input').value);
-    $('online-input').onkeydown = (event) => { if (event.key === 'Enter') joinRoom(event.target.value); };
-    $('online-leave').onclick = () => {
-      if (state.started || !hasFullMaps()) {
-        state.dataTransition = true;
-        try {
-          localStorage.removeItem('halo-web-room');
-          localStorage.setItem('halo-web-room-left', '1');
-        } catch { /* not kept */ }
-        const url = new URL(location.href);
-        url.searchParams.delete('room');
-        url.searchParams.set('menu', '1');
-        url.hash = '';
-        location.href = url.toString();
-        return Promise.resolve();
-      }
-      cancelQuickPlay();
-      state.selectedRoom = null;
-      quickStatus('menu', 'Room left. Choose a room or open the main menu.');
-      updatePlayButton();
-      return roomAction(async () => {
-        await HaloNet.leave();
-        try {
-          localStorage.removeItem('halo-web-room');
-          localStorage.setItem('halo-web-room-left', '1');
-        } catch { /* none */ }
-        setRoomURL(null);
-      });
-    };
-    $('online-share').onclick = async () => {
-      const room = HaloNet.status().room;
-      if (!room || room !== state.selectedRoom || $('online-share').disabled) return;
-      const link = roomLink(room);
-      try {
-        if (navigator.share) await navigator.share({ title: 'Halo CE room', text: 'Join my Halo game', url: link });
-        else {
-          await navigator.clipboard.writeText(link);
-          toast('The room link is copied.');
-        }
-      } catch { /* cancelled */ }
-    };
-    $('online-address').textContent = HaloNet.addressText(HaloNet.address);
-    $('opt-turn-url').value = settings.turnUrl || '';
-    $('opt-turn-user').value = settings.turnUser || '';
-    $('opt-turn-password').value = settings.turnPassword || '';
-    for (const [id, key] of [['opt-turn-url', 'turnUrl'], ['opt-turn-user', 'turnUser'], ['opt-turn-password', 'turnPassword']]) {
-      $(id).onchange = (event) => { settings[key] = event.target.value.trim(); saveSettings(); };
-    }
-    // An explicit link wins. Otherwise remember a chosen room or a decision
-    // to leave; new visitors gather in the default public room.
-    const linked = new URLSearchParams(location.search).get('room');
-    let last = null, left = false;
-    try {
-      last = localStorage.getItem('halo-web-room');
-      left = localStorage.getItem('halo-web-room-left') === '1';
-    } catch { /* none */ }
-    if (!$('invite-input') || !new URLSearchParams(location.hash.slice(1)).has('join')) {
-      if (linked) joinRoom(linked, { updateURL: false });
-      else if (!left && (last || DEFAULT_ROOM)) joinRoom(last || DEFAULT_ROOM, { remember: !!last, updateURL: false });
-    }
-    showOnline(HaloNet.status());
-  }
-
-  // ---------- updates
-
-  async function checkForUpdate() {
-    try {
-      const current = await (await fetch('version.json')).json();
-      state.version = current.version;
-      $('version').textContent = 'Build ' + current.version;
-      const latest = await (await fetch('version.json?latest=1', { cache: 'no-store' })).json();
-      if (latest.version && latest.version !== current.version && navigator.serviceWorker.controller) {
-        $('update-notice').hidden = false;
-      }
-    } catch { /* offline */ }
-  }
-
-  function updateFailed() {
-    $('update-notice').hidden = false;
-    $('update-message').textContent = 'The update could not be downloaded. Your current game is still available.';
-    $('update-button').disabled = false;
-    $('update-button').textContent = 'Retry update';
-  }
-
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.addEventListener('message', (event) => {
-      if (event.data === 'updated') location.reload();
-      if (event.data === 'update-failed') updateFailed();
-    });
-  }
-
-  // ---------- start
-
-  async function main() {
-    window.addEventListener('error', (event) => {
-      log(`error: ${event.message} (${event.filename}:${event.lineno})`);
-      if (state.started) fatal(event.message || 'An error stopped the game.');
-    });
-    window.addEventListener('unhandledrejection', (event) => log('unhandled: ' + event.reason));
-    window.addEventListener('resize', () => { if (state.shared) updateDisplaySize(); });
-    document.addEventListener('visibilitychange', onVisibility);
-
-    $('opt-touch').checked = settings.touch;
-    $('opt-touch-fps').checked = settings.touchFps === true;
-    $('opt-look').value = settings.look;
-    $('opt-vsync').checked = settings.vsync;
-    $('opt-resolution').value = settings.renderHeight;
-    $('opt-resolution').onchange = (event) => {
-      const height = Number(event.target.value);
-      if (![480, 720, 1080, 1440].includes(height)) return;
-      settings.renderHeight = height;
-      saveSettings();
-      if (state.shared) updateDisplaySize();
-    };
-    $('opt-touch').onchange = (event) => { settings.touch = event.target.checked; saveSettings(); };
-    $('opt-touch-fps').onchange = (event) => { settings.touchFps = event.target.checked; saveSettings(); };
-    $('opt-look').oninput = (event) => {
-      settings.look = parseFloat(event.target.value);
-      saveSettings();
-      HaloInput.setLookSensitivity(settings.look);
-    };
-    $('opt-vsync').onchange = (event) => { settings.vsync = event.target.checked; saveSettings(); };
-    $('opt-gldebug').checked = settings.glDebug;
-    $('opt-gldebug').onchange = (event) => { settings.glDebug = event.target.checked; saveSettings(); };
-    $('iso-file').onchange = onImageChosen;
-    $('play').onclick = () => {
-      unlockInteraction();
-      if (!state.manualMode && (state.invite || state.selectedRoom)) return maybeQuickPlay();
-      return play({ userGesture: true });
-    };
-    $('main-menu').onclick = openMainMenu;
-    $('room-toggle').onclick = () => showRoomSettings(true);
-    $('room-close').onclick = () => showRoomSettings(false);
-    $('quick-menu').onclick = openMainMenu;
-    $('fatal-menu').onclick = openMainMenu;
-    $('update-button').onclick = () => {
-      if ($('update-button').disabled) return;
-      $('update-button').disabled = true;
-      $('update-button').textContent = 'Updating…';
-      $('update-message').textContent = 'Downloading the update. The game will restart when it is ready.';
-      try {
-        navigator.serviceWorker.controller.postMessage('update');
-      } catch { updateFailed(); }
-    };
-    $('quick-retry').onclick = () => { state.quickFailed = false; state.manualMode = false; return maybeQuickPlay(); };
-    for (const type of ['pointerdown', 'keydown', 'touchstart']) {
-      window.addEventListener(type, (event) => {
-        // Browser autoplay and pointer lock may require a normal game interaction.
-        if (state.started && !state.roomSettingsOpen && (state.audio?.state !== 'running' ||
-            (type === 'pointerdown' && event.target === $('screen') && !document.pointerLockElement))) {
-          unlockInteraction();
-        }
-      }, { passive: true });
-    }
-    $('export-saves').onclick = exportSaves;
-    $('delete-data').onclick = deleteData;
-    const showLog = async () => {
-      $('log-text').textContent = await fullLog();
-      $('log-view').hidden = false;
-    };
-    $('show-log').onclick = showLog;
-    $('quick-log').onclick = showLog;
-    $('log-close').onclick = () => { $('log-view').hidden = true; };
-    $('log-download').onclick = async () => {
-      const file = await debugFile();
-      const contents = [`${navigator.userAgent}\nBuild ${state.version || 'unknown'}\n\n--- page and console ---\n${state.log.join('\n')}\n\n--- debug.txt ---\n`];
-      if (file) contents.push(file);
-      const url = URL.createObjectURL(new Blob(contents, { type: 'text/plain;charset=utf-8' }));
-      const link = document.createElement('a');
-      link.href = url; link.download = 'halo-log-' + new Date().toISOString().replace(/[:.]/g, '-') + '.txt';
-      link.click(); setTimeout(() => URL.revokeObjectURL(url), 30000);
-    };
-    $('log-copy').onclick = async () => {
-      try { await navigator.clipboard.writeText(await fullLog()); toast('Copied.'); } catch { toast('Could not copy.'); }
-    };
-    $('fatal-reload').onclick = () => location.reload();
-    $('fatal-log').onclick = async () => {
-      try { await navigator.clipboard.writeText(await fullLog()); toast('Copied.'); } catch { toast('Could not copy.'); }
-    };
-
-    const standalone = navigator.standalone || matchMedia('(display-mode: standalone)').matches ||
-      matchMedia('(display-mode: fullscreen)').matches;
-    $('install-hint').hidden = standalone || !ios;
-    $('iphone-tips').hidden = !ios;
-    $('rotate-iphone-tips').hidden = !ios;
-    // Android (Chrome, Edge, Samsung Internet): the browser's own install
-    // prompt when it offers one, otherwise where to find it
-    const android = /Android/i.test(navigator.userAgent);
-    $('install-android').hidden = standalone || !android;
-    window.addEventListener('beforeinstallprompt', (event) => {
-      event.preventDefault();
-      state.installPrompt = event;
-      $('install-android').hidden = standalone;
-      $('install-button').hidden = false;
-      $('install-android-menu').hidden = true;
-    });
-    $('install-button').onclick = async () => {
-      if (!state.installPrompt) return;
-      state.installPrompt.prompt();
-      const choice = await state.installPrompt.userChoice.catch(() => null);
-      state.installPrompt = null;
-      if (choice && choice.outcome === 'accepted') $('install-android').hidden = true;
-    };
-    window.addEventListener('appinstalled', () => { $('install-android').hidden = true; });
-
-    await ensureIsolation();
-    // A failed capability or data check must not hide an available repair.
-    checkForUpdate();
-    setUpOnline();
-    setUpInvites();
-    const ok = await runChecks();
-    if (!ok) return;
-    state.checksReady = true;
-    showSteps(await mapsState());
-  }
-
-  main().catch((error) => {
-    log('start: ' + (error && error.stack || error));
-    addCheck(false, 'The page could not start: ' + error.message);
+}
+
+$('update-button').addEventListener('click', () => {
+  $('update-button').disabled = true;
+  $('update-text').textContent = 'Updating…';
+  navigator.serviceWorker.addEventListener('message', (event) => {
+    if (event.data === 'updated') location.reload();
+    else if (event.data === 'update-failed') $('update-text').textContent = 'The update could not be downloaded.';
   });
+  navigator.serviceWorker.controller.postMessage('update');
+});
+
+// ---------- cross-origin isolation (sw.js)
+
+async function isolate() {
+  if (window.crossOriginIsolated || !('serviceWorker' in navigator) || !window.isSecureContext) return;
+  try {
+    await navigator.serviceWorker.register('sw.js');
+    await navigator.serviceWorker.ready;
+  } catch (error) {
+    logLine('service worker: ' + error);
+    return;
+  }
+  // once: a page the worker still does not isolate stays as it is
+  if (!sessionStorage.getItem('opence-isolating')) {
+    sessionStorage.setItem('opence-isolating', '1');
+    $('checks-note').textContent = 'Preparing the page (it loads once more)…';
+    $('checks-note').hidden = false;
+    location.reload();
+    await new Promise(() => {});
+  }
+}
+
+// ---------- the browser's checks
+
+const results = {};
+
+function addCheck(name, state, text, detail) {
+  results[name] = state;
+  const item = document.createElement('li');
+  item.className = state;
+  item.append(text);
+  if (detail) {
+    const span = document.createElement('span');
+    span.className = 'detail';
+    span.textContent = ' ' + detail;
+    item.append(span);
+  }
+  $('checks').append(item);
+}
+
+function workerWebGL2() {
+  return new Promise((resolve) => {
+    const source = "try { postMessage(!!new OffscreenCanvas(1, 1).getContext('webgl2')); } catch (e) { postMessage(false); }";
+    let worker;
+    try {
+      worker = new Worker(URL.createObjectURL(new Blob([source], { type: 'text/javascript' })));
+    } catch {
+      resolve(false);
+      return;
+    }
+    const timer = setTimeout(() => { worker.terminate(); resolve(false); }, 5000);
+    worker.onmessage = (event) => { clearTimeout(timer); worker.terminate(); resolve(event.data === true); };
+    worker.onerror = () => { clearTimeout(timer); worker.terminate(); resolve(false); };
+  });
+}
+
+function memoryAvailable() {
+  try {
+    const pages = WEB_MEMORY_BYTES / 65536;
+    new WebAssembly.Memory({ initial: pages, maximum: pages, shared: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function runChecks() {
+  $('checks').textContent = '';
+  addCheck('secure', window.isSecureContext ? 'good' : 'bad', 'A secure page (https)');
+  addCheck('isolated', window.crossOriginIsolated ? 'good' : 'bad', 'Threads (cross-origin isolation)',
+    window.crossOriginIsolated ? '' : 'reload the page; a private window may not allow it');
+  const webgl = typeof OffscreenCanvas !== 'undefined' && await workerWebGL2();
+  addCheck('webgl', webgl ? 'good' : 'bad', 'WebGL 2 from a worker');
+  const opfs = !!(navigator.storage && navigator.storage.getDirectory);
+  addCheck('opfs', opfs ? 'good' : 'bad', "The site's private storage (OPFS)");
+  const memory = window.crossOriginIsolated && memoryAvailable();
+  addCheck('memory', memory ? 'good' : 'bad', 'Memory for the game (2.1 GB)',
+    memory ? '' : 'this browser could not give the game that much: a 64-bit browser on a computer has it');
+  const required = ['secure', 'isolated', 'webgl', 'opfs', 'memory'];
+  return required.every((name) => results[name] === 'good');
+}
+
+// ---------- the game data (xiso-worker.js)
+
+let dataReady = false;
+
+function formatBytes(bytes) {
+  return bytes >= 1e9 ? (bytes / 1e9).toFixed(2) + ' GB' : Math.round(bytes / 1e6) + ' MB';
+}
+
+async function refreshData() {
+  dataReady = false;
+  let text = 'No game data yet: choose your disc image of Halo: Combat Evolved for the Xbox.';
+  try {
+    const root = await navigator.storage.getDirectory();
+    const maps = await root.getDirectoryHandle('maps');
+    const marker = await (await maps.getFileHandle('.complete')).getFile();
+    const complete = JSON.parse(await marker.text());
+    text = `${complete.files.length} files of maps (${formatBytes(complete.bytes)}), ready.`;
+    dataReady = true;
+  } catch {
+    // none, or a copy that did not finish
+  }
+  $('data-status').textContent = text;
+  $('delete-data').disabled = !dataReady;
+  await refreshStorage();
+  updatePlay();
+}
+
+async function refreshStorage() {
+  if (!navigator.storage || !navigator.storage.estimate) return;
+  const { usage, quota } = await navigator.storage.estimate();
+  const persisted = navigator.storage.persisted ? await navigator.storage.persisted() : false;
+  $('storage-status').textContent = `This site keeps ${formatBytes(usage || 0)} of the ${formatBytes(quota || 0)} ` +
+    `the browser allows it. ${persisted ? 'The browser keeps it.' : 'The browser may clear it when space runs low.'}`;
+  $('persist').disabled = persisted;
+}
+
+function importData(message) {
+  const worker = new Worker('xiso-worker.js');
+  $('import-progress').hidden = false;
+  $('import-bar').style.width = '0';
+  $('import-text').textContent = 'Reading…';
+  setImporting(true);
+  // (asked before the copy: the maps are 2 GB the browser should not drop)
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+  worker.onmessage = async (event) => {
+    const data = event.data;
+    if (data.type === 'progress') {
+      $('import-bar').style.width = (100 * data.done / data.total).toFixed(1) + '%';
+      $('import-text').textContent = `Copying ${data.file}: ${formatBytes(data.done)} of ${formatBytes(data.total)}`;
+      return;
+    }
+    worker.terminate();
+    setImporting(false);
+    if (data.type === 'done') {
+      $('import-text').textContent = `Copied ${data.files} files.`;
+      logLine(`import: ${data.files} files, ${data.bytes} bytes`);
+    } else {
+      $('import-text').textContent = data.message;
+      logLine('import failed: ' + data.message);
+    }
+    await refreshData();
+  };
+  worker.onerror = (event) => {
+    worker.terminate();
+    setImporting(false);
+    $('import-text').textContent = 'The copy failed: ' + event.message;
+  };
+  worker.postMessage(message);
+}
+
+function setImporting(importing) {
+  for (const id of ['image-label', 'folder-label']) $(id).classList.toggle('disabled', importing);
+  $('image-input').disabled = importing;
+  $('folder-input').disabled = importing;
+  $('play').disabled = importing || !canPlay();
+}
+
+$('image-input').addEventListener('change', (event) => {
+  const file = event.target.files[0];
+  event.target.value = '';
+  if (file) importData({ type: 'image', file });
+});
+$('folder-input').addEventListener('change', (event) => {
+  const files = [...event.target.files];
+  event.target.value = '';
+  if (files.length) importData({ type: 'folder', files });
+});
+
+$('delete-data').addEventListener('click', async () => {
+  if (!confirm('Delete the maps copied into this browser? Saved games stay.')) return;
+  const root = await navigator.storage.getDirectory();
+  await root.removeEntry('maps', { recursive: true }).catch(() => {});
+  // (and the game's copies of them, save/z/cache000.map and on)
+  try {
+    const drive = await (await root.getDirectoryHandle('save')).getDirectoryHandle('z');
+    for await (const [name] of drive.entries()) {
+      if (/^cache\d+\.map$/i.test(name)) await drive.removeEntry(name).catch(() => {});
+    }
+  } catch {
+    // no saved games yet
+  }
+  await refreshData();
+});
+
+$('persist').addEventListener('click', async () => {
+  if (navigator.storage && navigator.storage.persist) await navigator.storage.persist();
+  await refreshStorage();
+});
+
+// ---------- saved games out, as a zip (stored, not compressed)
+
+const crcTable = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(bytes) {
+  let crc = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) crc = crcTable[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+function zip(entries) {
+  const encoder = new TextEncoder();
+  const parts = [];
+  const central = [];
+  let offset = 0;
+  for (const { name, data } of entries) {
+    const nameBytes = encoder.encode(name);
+    const crc = crc32(data);
+    const local = new DataView(new ArrayBuffer(30));
+    local.setUint32(0, 0x04034b50, true);
+    local.setUint16(4, 20, true);
+    local.setUint16(6, 0x0800, true);
+    local.setUint32(14, crc, true);
+    local.setUint32(18, data.length, true);
+    local.setUint32(22, data.length, true);
+    local.setUint16(26, nameBytes.length, true);
+    const header = new DataView(new ArrayBuffer(46));
+    header.setUint32(0, 0x02014b50, true);
+    header.setUint16(4, 20, true);
+    header.setUint16(6, 20, true);
+    header.setUint16(8, 0x0800, true);
+    header.setUint32(16, crc, true);
+    header.setUint32(20, data.length, true);
+    header.setUint32(24, data.length, true);
+    header.setUint16(28, nameBytes.length, true);
+    header.setUint32(42, offset, true);
+    parts.push(local.buffer, nameBytes, data);
+    central.push(header.buffer, nameBytes);
+    offset += 30 + nameBytes.length + data.length;
+  }
+  const centralSize = central.reduce((sum, part) => sum + part.byteLength, 0);
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true);
+  end.setUint16(8, entries.length, true);
+  end.setUint16(10, entries.length, true);
+  end.setUint32(12, centralSize, true);
+  end.setUint32(16, offset, true);
+  return new Blob([...parts, ...central, end.buffer], { type: 'application/zip' });
+}
+
+// the saved games and profiles, not the maps the game keeps a copy of as the
+// Xbox's hard disk did (save/z/cache000.map and on: hundreds of MB the game
+// makes again)
+async function collect(directory, prefix, entries) {
+  for await (const [name, handle] of directory.entries()) {
+    if (/^cache\d+\.map$/i.test(name) || (prefix === 'save/z/' && name === 'maps')) continue;
+    if (handle.kind === 'directory') await collect(handle, prefix + name + '/', entries);
+    else entries.push({ name: prefix + name, data: new Uint8Array(await (await handle.getFile()).arrayBuffer()) });
+  }
+}
+
+$('export-saves').addEventListener('click', async () => {
+  if (gameStarted && !gameStopped) {
+    alert('Quit the game first: its files are open while it runs.');
+    return;
+  }
+  const entries = [];
+  const root = await navigator.storage.getDirectory();
+  try {
+    await collect(await root.getDirectoryHandle('save'), 'save/', entries);
+  } catch {
+    // no saved games yet
+  }
+  const config = await readStorageText('config.toml');
+  if (config != null) entries.push({ name: 'config.toml', data: new TextEncoder().encode(config) });
+  if (!entries.length) {
+    alert('There are no saved games yet.');
+    return;
+  }
+  download('opence-saves.zip', zip(entries));
+});
+
+$('download-log').addEventListener('click', downloadLog);
+$('fatal-log-download').addEventListener('click', downloadLog);
+$('fatal-reload').addEventListener('click', () => location.reload());
+
+// ---------- the game
+
+let checksPassed = false;
+let gameStarted = false;
+let gameStopped = false;
+let wakeLock = null;
+
+function canPlay() {
+  return checksPassed && dataReady && !gameStarted;
+}
+
+function updatePlay() {
+  $('play').disabled = !canPlay();
+  $('play-note').textContent = !checksPassed ? 'This browser cannot run the game (above).' :
+    !dataReady ? 'The game data is needed first.' : '';
+}
+
+// init.txt in the data folder: the console commands the game runs as it
+// starts. ?map= writes one, and the page removes it on the next visit
+// without ?map=, only if it wrote it.
+const INIT_MARKER = 'opence-page-wrote-init';
+
+async function prepareInit() {
+  const root = await navigator.storage.getDirectory();
+  let wrote = false;
+  try {
+    wrote = localStorage.getItem(INIT_MARKER) === '1';
+  } catch {
+    // (no localStorage: nothing to undo)
+  }
+  if (params.has('map')) {
+    const name = params.get('map');
+    const level = name.includes('\\') ? name : `levels\\${name}\\${name}`;
+    if (!/^[A-Za-z0-9_\\]+$/.test(level)) return;
+    const handle = await root.getFileHandle('init.txt', { create: true });
+    const writable = await handle.createWritable();
+    await writable.write(`map_name ${level}\r\n`);
+    await writable.close();
+    try {
+      localStorage.setItem(INIT_MARKER, '1');
+    } catch {
+      // as above
+    }
+  } else if (wrote) {
+    await root.removeEntry('init.txt').catch(() => {});
+    try {
+      localStorage.removeItem(INIT_MARKER);
+    } catch {
+      // as above
+    }
+  }
+}
+
+// ---------- rooms (net.js)
+
+function roomLink(secret) {
+  return `${location.origin}${location.pathname}?room=${secret}`;
+}
+
+function showRoom(status) {
+  const inRoom = !!status;
+  $('room-create').hidden = inRoom || gameStarted;
+  $('room-copy').hidden = !inRoom;
+  $('room-leave').hidden = !inRoom || gameStarted;
+  if (!inRoom) return;
+  const brokers = status.brokers ? '' : ' (finding the message brokers…)';
+  $('room-status').textContent = status.peers ?
+    `In a room with ${status.connected} of ${status.peers} other browsers connected${brokers}. Your address: ${status.address}.` :
+    `In a room, alone so far${brokers}: send its link to your friends.`;
+}
+
+async function joinRoom(secret) {
+  const brokers = (params.get('brokers') || '').split(',').filter((url) => /^wss?:\/\//.test(url));
+  showRoom(await window.HaloNet.join(secret, brokers));
+  history.replaceState(null, '', `?${new URLSearchParams({ ...Object.fromEntries(params), room: secret })}`);
+}
+
+window.HaloNet.onChange(showRoom);
+
+$('room-create').addEventListener('click', () => joinRoom(window.HaloNet.newSecret()));
+$('room-copy').addEventListener('click', async () => {
+  const status = window.HaloNet.status();
+  if (!status) return;
+  try {
+    await navigator.clipboard.writeText(roomLink(status.secret));
+    $('room-copy').textContent = 'Copied';
+    setTimeout(() => { $('room-copy').textContent = "Copy the room's link"; }, 1500);
+  } catch {
+    prompt("The room's link:", roomLink(status.secret));
+  }
+});
+$('room-leave').addEventListener('click', () => {
+  window.HaloNet.leave();
+  params.delete('room');
+  history.replaceState(null, '', params.toString() ? `?${params}` : location.pathname);
+});
+
+function gameArguments() {
+  const args = [];
+  // (the game's address in the room: port/web/src/web_net.c)
+  if (window.HaloNet.address()) args.push('--HALO_WEB_ADDRESS=' + window.HaloNet.address());
+  for (const value of params.getAll('set')) {
+    if (/^[A-Z0-9_]+=/.test(value)) args.push('--' + value);
+  }
+  if (params.has('menu')) args.push('--HALO_MENU_OPEN=' + params.get('menu'));
+  // internet play's brokers (port/linux/src/p2p_signal.c), if not its own
+  const brokers = (params.get('brokers') || '').split(',').filter((url) => /^wss?:\/\/[^,\s]+$/.test(url));
+  if (brokers.length) args.push('--HALO_WEB_BROKERS=' + brokers.join(','));
+  // an invite to join (its code, or a whole link)
+  const invite = /([0-9a-f]{64})\s*$/i.exec(params.get('join') || '');
+  if (invite) args.push('halo://join/' + invite[1].toLowerCase());
+  return args;
+}
+
+function showFatal(text) {
+  gameStopped = true;
+  $('fatal-text').textContent = text;
+  $('fatal-log').textContent = log.slice(-60).join('\n');
+  $('fatal').hidden = false;
+  if (document.exitPointerLock) document.exitPointerLock();
+}
+
+// a game hosted for the internet: its invite as this page's address with
+// ?join= (which native builds take too), and a button that copies it (a
+// page may write the clipboard only when it is clicked)
+function showInvite(text) {
+  const code = /([0-9a-f]{64})/.exec(text);
+  if (!code) return;
+  $('invite-link').value = `${location.origin}${location.pathname}?join=${code[1]}`;
+  $('invite-copy').textContent = 'Copy';
+  $('invite').hidden = false;
+}
+
+$('invite-copy').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText($('invite-link').value);
+    $('invite-copy').textContent = 'Copied';
+  } catch {
+    $('invite-link').select();
+  }
+});
+$('invite-close').addEventListener('click', () => { $('invite').hidden = true; });
+
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = src;
+    script.onload = resolve;
+    script.onerror = () => reject(new Error('could not load ' + src));
+    document.head.append(script);
+  });
+}
+
+async function play() {
+  if (!canPlay()) return;
+  gameStarted = true;
+  watchFrames();
+  $('launcher').hidden = true;
+  $('update').hidden = true;
+  $('game').hidden = false;
+  const canvas = $('canvas');
+  canvas.focus();
+  try {
+    if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request('screen');
+  } catch {
+    // (a phone may still dim)
+  }
+  try {
+    await prepareInit();
+    await loadScript('halo.js');
+    const options = {
+      canvas,
+      arguments: gameArguments(),
+      print: (text) => { logLine(text); console.log(text); },
+      printErr: (text) => {
+        logLine(text);
+        console.warn(text);
+        if (!$('starting').hidden && /data root:/.test(text)) $('starting-text').textContent = 'Loading the menus…';
+      },
+      haloNetSend: (address, reliable, bytes) => window.HaloNet.send(address, reliable, bytes),
+      // internet play's WebRTC connections (p2p.js)
+      haloP2P: (command, connection, bytes) => window.HaloP2P.command(command, connection, bytes),
+      haloMessage: (kind, text) => {
+        logLine(text);
+        if (kind === 2) showInvite(text);
+        if (kind === 3) showFatal(text);
+      },
+      onAbort: (what) => showFatal('The game stopped: ' + what),
+      onExit: (status) => {
+        if (status) showFatal(`The game stopped (status ${status}). The log below says why.`);
+        else location.reload();
+      },
+    };
+    // (the module these options become, which p2p.js calls into as soon as
+    // the game asks it for a connection)
+    window.HaloP2P.attach(options);
+    game = await window.createHalo(options);
+    // the on-screen touch controls (touch.js), and the room's frames (net.js)
+    window.HaloTouch.start(game, $('touch'));
+    window.HaloNet.attach(game);
+  } catch (error) {
+    showFatal(String(error && error.message ? error.message : error));
+  }
+}
+
+// While the game wants the mouse for the aim (its word in web_shared.h,
+// port/web/src), a click on it takes the pointer lock back, from the click
+// itself: the game's own request comes from its thread, after the click, and
+// the browser refuses that once the player has let the lock go (Escape).
+const MOUSE_WANTED_WORD = 48;
+
+$('canvas').addEventListener('pointerdown', (event) => {
+  const canvas = event.currentTarget;
+  if (event.pointerType !== 'mouse' || !game || !game._web_state || document.pointerLockElement === canvas) return;
+  if (!game.HEAPU32[(game._web_state() >> 2) + MOUSE_WANTED_WORD]) return;
+  const request = canvas.requestPointerLock();
+  // (refused for a moment after Escape: the next click asks again)
+  if (request && request.catch) request.catch(() => {});
+});
+
+// The game counts the frames it shows in its memory (web_state,
+// port/web/src/web_main.c), which the page reads: while the count stands
+// still, the game is starting or loading a map, and the page says so.
+let game = null;
+
+function watchFrames() {
+  let shown = -1;
+  let changed = performance.now();
+  const timer = setInterval(() => {
+    if (gameStopped) {
+      clearInterval(timer);
+      $('starting').hidden = true;
+      return;
+    }
+    if (!game || !game._web_state) return;
+    const now = game.HEAPU32[game._web_state() >> 2];
+    if (now !== shown) {
+      if (shown < 0 && now === 0) return;
+      shown = now;
+      changed = performance.now();
+      $('starting').hidden = true;
+    } else if (performance.now() - changed > 600 && $('starting').hidden) {
+      $('starting-text').textContent = 'Loading…';
+      $('starting').hidden = false;
+    }
+  }, 200);
+}
+
+$('play').addEventListener('click', play);
+
+$('fullscreen').addEventListener('click', async () => {
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else await $('game').requestFullscreen({ navigationUI: 'hide' });
+    // (Escape is the game's in fullscreen too, where the browser lets it)
+    if (navigator.keyboard && navigator.keyboard.lock && document.fullscreenElement) {
+      await navigator.keyboard.lock(['Escape']).catch(() => {});
+    }
+  } catch (error) {
+    logLine('fullscreen: ' + error);
+  }
+});
+
+$('leave').addEventListener('click', () => {
+  if (confirm('Quit the game? Progress since the last checkpoint is lost.')) location.reload();
+});
+
+// Tab is the game's (switch weapons, the scoreboard), not the page's focus;
+// the key still reaches the game (SDL listens on the window)
+window.addEventListener('keydown', (event) => {
+  if (gameStarted && !gameStopped && event.key === 'Tab') event.preventDefault();
+}, true);
+
+$('canvas').addEventListener('click', () => $('canvas').focus());
+$('canvas').addEventListener('contextmenu', (event) => event.preventDefault());
+
+document.addEventListener('visibilitychange', async () => {
+  if (gameStarted && !gameStopped && document.visibilityState === 'visible' && navigator.wakeLock && !wakeLock) {
+    try {
+      wakeLock = await navigator.wakeLock.request('screen');
+    } catch {
+      // as before
+    }
+  }
+  if (document.visibilityState === 'hidden') wakeLock = null;
+});
+
+// ---------- start
+
+(async () => {
+  await isolate();
+  await loadStamp();
+  checksPassed = await runChecks();
+  if (!checksPassed) {
+    $('checks-note').textContent = 'Desktop Chrome, Edge and Firefox run the game; Safari 17 or later may.';
+    $('checks-note').hidden = false;
+  }
+  if (results.opfs === 'good') await refreshData();
+  else updatePlay();
+  checkForUpdate();
+  if (/^[0-9a-f]{32}$/.test(params.get('room') || '')) await joinRoom(params.get('room'));
+  if (params.has('play')) play();
 })();

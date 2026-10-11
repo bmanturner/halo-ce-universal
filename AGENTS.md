@@ -1,10 +1,10 @@
 # Notes for agents
 
 This repository ports the Halo: Combat Evolved decompilation (Xbox build
-01.01.14.2342, `cachebeta.exe`) to Linux, Windows, Android and the Apple
-platforms (iPhone, iPad, Mac and Apple TV). The game's C sources are the
-decompilation; the port adds a platform layer that implements the Xbox APIs
-the game calls, and features the Xbox game did not have (a new netcode,
+01.01.14.2342, `cachebeta.exe`) to Linux, Windows, Android, the web and the
+Apple platforms (iPhone, iPad, Mac and Apple TV). The game's C sources are
+the decompilation; the port adds a platform layer that implements the Xbox
+APIs the game calls, and features the Xbox game did not have (a new netcode,
 internet play, the PC version's menus, Custom Edition maps, touch controls).
 The project is published as OpenCE.
 
@@ -22,7 +22,8 @@ end.
 | `port/include/xdk/` | Stand-ins for the Xbox SDK's headers (declarations only) |
 | `port/windows/` | The Windows build's own files (`win32_*.c`, headers) |
 | `port/android/` | The Android app: the guest runtime, the host library (`host/`), the Java app (`app/`), host imports (`host_imports.list`) |
-| `port/ios/` | The iPhone and iPad app: the UIKit host (`host/`), the guest's host imports, the CMake project, the room transport (`network/`), tests and the Apple documents |
+| `port/web/` | The web build: its runtime (`src/`: entry, sockets inside the page, memory watch), the page and its service worker (`site/`), the SDL port, tests |
+| `port/ios/` | The iPhone and iPad app: the UIKit host (`host/`), the guest's host imports, the CMake project, tests and the Apple documents |
 | `port/macos/` | The Mac app: CMake project, AppKit hooks (`host_platform.m`), the icon |
 | `port/tvos/` | The Apple TV app: CMake project, tvOS hooks, CloudKit saves |
 | `port/apple/` | What the Apple apps share: the game store (`game_store.m`), the icon artwork and the distribution notes |
@@ -30,7 +31,7 @@ end.
 | `port/assets/` | What the builds embed or ship: high-res HUD (`hud/`), fonts, titles, menus (`menus/`), icons, network brokers |
 | `port/third_party/` | Vendored libraries, each with a README naming its upstream, version and checksum |
 | `port/tools/` | Stand-alone tools (`cache_file_report.c`) |
-| `tools/` | Build scripts (`linux_build.py`, `windows_build.py`, `android_build.py`, `ios_build.py`, `macos_build.py`, `tvos_build.py`, `tvos_angle.py`, `tvos_icon.py`, `ci_build.py`), generators (`ce_menus.py`, `port_settings.py`, `hud_assets.py`, `title_assets.py`, `embed_assets.py`, `xdk_headers.py`) and tests |
+| `tools/` | Build scripts (`linux_build.py`, `windows_build.py`, `android_build.py`, `web_build.py`, `ios_build.py`, `macos_build.py`, `tvos_build.py`, `tvos_angle.py`, `tvos_icon.py`, `ci_build.py`, `web_serve.py`), generators (`ce_menus.py`, `port_settings.py`, `hud_assets.py`, `title_assets.py`, `embed_assets.py`, `xdk_headers.py`) and tests |
 | `docs/` | Longer design notes (`custom_edition_caches.md`) |
 | `pgo/` | Profile-guided optimisation profiles |
 | `assets/` | Game data for local runs (gitignored: `maps/`, `custom_maps/`) |
@@ -43,6 +44,7 @@ python configure.py            # debug build; add --release, --portable, --profi
 ninja linux                    # build/linux/halo
 ninja android                  # the Android guest image and native libraries
 ninja android_apk              # the APK (Gradle)
+ninja web                      # build/web/site (Emscripten: port/web/README.md)
 ninja windows                  # on Windows only
 python tools/ci_build.py linux release   # what CI builds
 python3 tools/ios_build.py --team TEAM --bundle-id ID   # the iPhone and iPad app (macOS with Xcode)
@@ -64,14 +66,19 @@ python3 tools/tvos_build.py --team TEAM --bundle-id ID --game-data DIR   # the A
   and only the SDL functions `guest_sdl.c` bridges. Run `ninja android`
   after changing anything it compiles: `port/linux/src`, `port/linux/game`,
   `port/android`, `source/`, the build scripts.
+- Web: the game is `wasm32` (also ILP32), run on a Web Worker; calls must
+  match their callee's type exactly (the link fails on a mismatch), and
+  WebGL 2 is ES 3.0. Run `ninja web` after changing what it compiles (as
+  for Android, and `port/web`). Refer to [port/web/README.md](port/web/README.md).
 
 ### Defines
 
 | Define | Set by | Meaning |
 | --- | --- | --- |
 | `HALO_ANDROID` | Android | The app: its display, input, files and lifecycle |
-| `HALO_GLES` | Android | The OpenGL ES renderer |
+| `HALO_GLES` | Android, web | The OpenGL ES renderer |
 | `HALO_ARM64_GUEST` | Android | The guest's ABI (ILP32 AArch64) |
+| `HALO_WEB` | Web | The browser: its frames, storage, sockets and WebGL 2's limits (with `HALO_GLES`, not `HALO_ANDROID`) |
 | `HALO_WINDOWS` | Windows (`halo_windows_prefix.h`) | The Windows build |
 | `HALO_RELEASE` | `--release` | No assertions checked |
 | `HALO_PROFILE` | `--profile` | The profiling build; a normal build must be unchanged by it |
@@ -90,6 +97,9 @@ python -m pytest -q tools/test_cache_file_formats.py tools/test_bmp_files.py too
 python tools/test_touch_layout.py                           # the Android touch layout (JDK 17+)
 python tools/test_light_storage.py
 python tools/test_death_timing.py
+python -m pytest -q tools/test_web_build.py                 # the web build's graph, sockets, menus
+node --test "port/web/tests/*.test.js"                      # the web page's importer and service worker
+node port/web/tests/webrtc_native.mjs chromium firefox      # the native builds' WebRTC with browsers (Playwright)
 ```
 
 `tools/harness/README.md` explains how to add an asset-free test: the code
@@ -137,6 +147,11 @@ read `xbox/include`. To add a name, follow `port/include/xdk/README.md`.
   do not play together.
 - Only the host decides; clients predict their own players. Read
   `port/linux/NETCODE.md` before changing the netcode.
+- Internet play is the same code in every build, the web's too: a browser's
+  tunnel is a WebRTC data channel (`port/web/src/web_p2p.c`), which the
+  native builds take on their tunnel's socket (`p2p_webrtc.c`, `posix_dtls.c`).
+  Check a change with both (`port/web/tests/webrtc_native.mjs`, and with the
+  maps `port/web/tests/internet.mjs`).
 - Anything another machine sends is untrusted: check sizes, indices and
   rates, as the existing handlers do. `debug.network_corrupt` tests this.
 
@@ -207,14 +222,16 @@ as documentation of file formats, never copied.
 | [port/linux/NETCODE.md](port/linux/NETCODE.md) | The distributed netcode, network versions, joining a game in progress, transport, testing |
 | [port/windows/README.md](port/windows/README.md) | The Windows build, its headers, inline functions, crash reports |
 | [port/android/README.md](port/android/README.md) | The Android build, the guest and host, touch controls, Android settings, finding problems |
+| [port/web/README.md](port/web/README.md) | The web build, the page, the game data in the browser, limits, how it operates, hosting on GitHub Pages |
 | [port/tvos/README.md](port/tvos/README.md) | The Apple TV app: build, install, game data in the bundle, iCloud saves, controls, differences from iOS |
-| [port/ios/README.md](port/ios/README.md) | The iPhone and iPad app: build, the guest, importing a disc image, settings, browser rooms |
+| [port/ios/README.md](port/ios/README.md) | The iPhone and iPad app: build, the guest, importing a disc image, settings |
 | [port/macos/README.md](port/macos/README.md) | The Mac app |
 | [port/apple/DISTRIBUTION.md](port/apple/DISTRIBUTION.md) | Game storage, packaging and the unresolved distribution questions for the Apple apps |
 | [port/ios/RESIGNING.md](port/ios/RESIGNING.md) | Installing the unsigned IPA with your own Apple account |
 | [port/ios/VALIDATION.md](port/ios/VALIDATION.md) | The iOS device and simulator validation record |
 | [port/ios/THIRD_PARTY.md](port/ios/THIRD_PARTY.md) | The Apple apps' third-party code and licences |
 | [port/ios/ICON.md](port/ios/ICON.md) | The app icon artwork and how the icons are made |
+| [FORK.md](FORK.md) | The Apple fork: what it adds to OpenCE, and the OpenCE commit it is up to date with |
 | [port/include/xdk/README.md](port/include/xdk/README.md) | How the SDK declarations were written and are checked |
 | [docs/custom_edition_caches.md](docs/custom_edition_caches.md) | Loading and converting Custom Edition maps, and the evidence for each layout |
 | [port/assets/menus/README.md](port/assets/menus/README.md) | The menu files' format and how to write them again |

@@ -19,7 +19,8 @@ rest as the host has it:
   (player_queues_new.c).
 - Every tick, a client sends the host where its own players' units are (it
   predicts them from its own input); the host takes that as they are,
-  within a tolerance, as later Halo engines do, at its next tick.
+  within a tolerance, as later Halo engines do, at its next tick (on a
+  moving elevator, only across: its own elevator takes them up and down).
 - Every tick, the host sends every client every player's unit: which unit
   the player has, alive or not, the seat it rides, its shields and health
   (down, recharging, the damage they show), and where it is (dead: who
@@ -54,6 +55,7 @@ machine (their datum identifiers need not be).
 #include "cseries.h"
 #include "cseries/errors.h"
 #include "cache/cache_files.h"
+#include "devices/devices.h"
 #include "models/model_animation_definitions.h"
 #include "game/game.h"
 #include "game/game_globals.h"
@@ -72,9 +74,6 @@ machine (their datum identifiers need not be).
 #include "units/bipeds.h"
 #include "network_coop.h"
 #include "network_distributed.h"
-#include "network_checkpoint.h"
-#include "networking/network_migration.h"
-#include "game/game_engine.h"
 #include "network_voice.h"
 #include "profile_sections.h"
 
@@ -286,52 +285,6 @@ enum
 	HIDDEN_PLAYER_PERIOD_TICKS = 6,
 };
 
-enum
-{
-	MIGRATION_CHECKPOINT_VERSION = 2,
-	MIGRATION_CHECKPOINT_INTERVAL_TICKS = 15,
-	MIGRATION_CHECKPOINT_CAPACITY = 4 * 1024 * 1024,
-	MIGRATION_CHECKPOINT_FRAGMENT_SIZE = 0xE00,
-};
-
-struct migration_player_state
-{
-	short player_index;
-	short pad;
-	long unit_index;
-	long dead_unit_index;
-	long respawn_timer;
-	long respawn_penalty;
-	long death_time;
-	long telefrag_timeout;
-	long quit_out_of_game_time;
-	boolean quit_out_of_game;
-	boolean is_blocking_teleporter;
-	byte pad1[2];
-};
-
-struct migration_checkpoint_state
-{
-	long version;
-	unsigned long session_seed;
-	unsigned long random_seed;
-	long engine_size;
-	long object_size;
-	long damage_size;
-	long player_count;
-	long host_machine_index;
-	unsigned long machine_addresses[HALO_PORT_MAXIMUM_NETWORK_MACHINES];
-	struct network_migration_membership membership;
-};
-
-struct migration_checkpoint_message
-{
-	struct distributed_message_header header;
-	struct network_checkpoint_manifest manifest;
-	unsigned long offset;
-	byte data[MIGRATION_CHECKPOINT_FRAGMENT_SIZE];
-};
-
 /* shields, health and the damage they show in 16 bits: 0 to 4 */
 #define VITALITY_SCALE 16384.0f
 
@@ -507,15 +460,6 @@ struct distributed_packer
 /* ---------- globals */
 
 static long distributed_last_sent_time = NONE;
-static byte migration_checkpoint_staging[MIGRATION_CHECKPOINT_CAPACITY];
-static byte migration_checkpoint_complete[MIGRATION_CHECKPOINT_CAPACITY];
-static byte migration_checkpoint_outgoing[MIGRATION_CHECKPOINT_CAPACITY];
-static struct network_checkpoint_store migration_checkpoint_store =
-{
-	migration_checkpoint_staging, migration_checkpoint_complete,
-	MIGRATION_CHECKPOINT_CAPACITY, 0, { 0 }, { 0 }, 0, NULL
-};
-static long migration_latest_game_state_tick = NONE;
 
 /* the tick's steps, timed in the profiling build */
 PROFILE_SECTION(distributed_tick_apply_predictions_section, "network_distributed_tick.apply_predictions")
@@ -2082,8 +2026,31 @@ static boolean distributed_on_foot_move_valid(
 	return dx * dx + dy * dy + rise * rise <= reach * reach && -dz <= fall_reach;
 }
 
+/* (the host) whether a unit rides an elevator that is moving (bipeds.c's
+elevator, kept a moment after the unit leaves its floor, as in a jump) */
+static boolean distributed_riding_moving_elevator(
+	long unit_index)
+{
+	struct biped_datum *biped = (struct biped_datum *)object_try_and_get_and_verify_type(unit_index,
+		_object_mask_biped);
+	struct device_datum *elevator;
+
+	if (!biped || biped->biped.elevator_object_index == NONE)
+		return FALSE;
+	elevator = (struct device_datum *)object_try_and_get_and_verify_type(biped->biped.elevator_object_index,
+		_object_mask_device);
+	return elevator && elevator->device.position_velocity != 0.0f;
+}
+
 /* (the host) a client's player's prediction of its unit on foot, taken
-where it says within a tolerance (distributed_apply_predictions) */
+where it says within a tolerance (distributed_apply_predictions). Riding a
+moving elevator, only across: a client's elevator follows the host's
+(network_coop.c), behind it by the time the host's word takes to come, and
+the client's prediction a round trip behind the host's elevator when it
+comes. Taken up and down too, it would put the host's unit under its own
+elevator's floor going up, to fall through it, and the client's after it
+(distributed_correct_own_unit); each machine's elevator carries its own
+unit up and down as it moves, and they meet where it stops. */
 static void distributed_take_prediction(
 	short player_index,
 	long unit_index,
@@ -2092,10 +2059,14 @@ static void distributed_take_prediction(
 	struct distributed_unit_state const *state = &distributed_predictions[player_index].state;
 	struct object_datum *object = object_get(unit_index);
 	long now = game_time_get();
-	real dx = state->position.x - object->object.position.x;
-	real dy = state->position.y - object->object.position.y;
-	real dz = state->position.z - object->object.position.z;
+	real_point3d position = state->position;
+	real dx, dy, dz;
 
+	if (distributed_riding_moving_elevator(unit_index))
+		position.z = object->object.position.z;
+	dx = position.x - object->object.position.x;
+	dy = position.y - object->object.position.y;
+	dz = position.z - object->object.position.z;
 	if (!(dx * dx + dy * dy + dz * dz <= HOST_ACCEPT_TOLERANCE * HOST_ACCEPT_TOLERANCE))
 		return;
 	if (distributed_accepted[player_index].valid)
@@ -2115,7 +2086,7 @@ static void distributed_take_prediction(
 			distributed_host_speeds[player_index].ground_time = now;
 		}
 		else if (ticks <= 0 || !distributed_on_foot_move_valid(bound, &distributed_accepted[player_index].position,
-			&state->position, ticks))
+			&position, ticks))
 		{
 			return;
 		}
@@ -2123,14 +2094,14 @@ static void distributed_take_prediction(
 	/* (no higher above where the host last had it on the ground than a
 	jump, or a throw its ticks gave it, takes it, and in the air falling:
 	past that the host's copy falls as its ticks have it) */
-	if (!(state->position.z - distributed_host_speeds[player_index].ground_height <=
+	if (!(position.z - distributed_host_speeds[player_index].ground_height <=
 		distributed_on_foot_ceiling(player_index, bound)))
 	{
 		return;
 	}
 	/* (the client told which of its ticks the host has it at) */
-	if (distributed_apply_state(unit_index, state, &state->position, 0.0f, HOST_BLEND_DISTANCE, bound->speed,
-		distributed_on_foot_fall_speed(bound, state->position.z)))
+	if (distributed_apply_state(unit_index, state, &position, 0.0f, HOST_BLEND_DISTANCE, bound->speed,
+		distributed_on_foot_fall_speed(bound, position.z)))
 	{
 		distributed_predictions[player_index].taken_time = distributed_predictions[player_index].time;
 		distributed_predictions[player_index].taken_host_time = now;
@@ -2142,7 +2113,7 @@ static void distributed_take_prediction(
 			distributed_accepted[player_index].unit_index = unit_index;
 			distributed_accepted[player_index].time = distributed_predictions[player_index].time;
 			distributed_accepted[player_index].host_time = now;
-			distributed_accepted[player_index].position = state->position;
+			distributed_accepted[player_index].position = position;
 		}
 		distributed_accepted[player_index].taken_host_time = now;
 		distributed_accepted[player_index].taken_host_position = object->object.position;
@@ -3313,280 +3284,6 @@ static void distributed_send_game_state(
 		_distributed_to_clients_reliably);
 }
 
-/* ---------- live authority checkpoints */
-
-static unsigned long distributed_migration_epoch(void)
-{
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-	return network_game_migration_epoch();
-#else
-	return 0;
-#endif
-}
-
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-static boolean distributed_checkpoint_validate_ownership(struct migration_checkpoint_state const *state)
-{
-	long index, other;
-	if (!network_game_client_migration_validate_machines(&state->membership, sizeof(state->membership)) ||
-		state->host_machine_index < 0 || state->host_machine_index >= HALO_PORT_MAXIMUM_NETWORK_MACHINES ||
-		state->membership.machines[state->host_machine_index].machine_index != state->host_machine_index)
-		return FALSE;
-	for (index = 0; index < HALO_PORT_MAXIMUM_NETWORK_MACHINES; index++)
-	{
-		boolean present = state->membership.machines[index].machine_index != NONE;
-		if (present != (state->machine_addresses[index] != 0))
-			return FALSE;
-		if (!present)
-			continue;
-		for (other = 0; other < index; other++)
-		{
-			if (state->machine_addresses[other] == state->machine_addresses[index])
-				return FALSE;
-		}
-	}
-	return TRUE;
-}
-#endif
-
-static boolean distributed_checkpoint_validate(byte const *buffer, long size)
-{
-	struct migration_checkpoint_state state;
-	long offset;
-	long index;
-	byte seen[MAXIMUM_TRACKED_PLAYERS];
-	if (size < (long)sizeof(state))
-		return FALSE;
-	memcpy(&state, buffer, sizeof(state));
-	if (state.version != MIGRATION_CHECKPOINT_VERSION ||
-		state.session_seed != (unsigned long)network_game_get_random_seed() ||
-		state.player_count < 0 || state.player_count > MAXIMUM_TRACKED_PLAYERS ||
-		state.host_machine_index < 0 || state.host_machine_index >= HALO_PORT_MAXIMUM_NETWORK_MACHINES ||
-		state.engine_size <= 0 || state.engine_size > MAXIMUM_GAME_STATE_SIZE ||
-		state.object_size <= 0 || state.damage_size <= 0)
-		return FALSE;
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-	if (!distributed_checkpoint_validate_ownership(&state))
-		return FALSE;
-#endif
-	offset = sizeof(state) + state.player_count * sizeof(struct migration_player_state);
-	if (offset > size || state.engine_size > size - offset ||
-		state.object_size > size - offset - state.engine_size ||
-		state.damage_size != size - offset - state.engine_size - state.object_size ||
-		!game_engine_validate_migration_state(buffer + offset, state.engine_size) ||
-		!network_objects_migration_validate(buffer + offset + state.engine_size, state.object_size) ||
-		!network_damage_migration_validate(buffer + offset + state.engine_size + state.object_size, state.damage_size))
-		return FALSE;
-	memset(seen, 0, sizeof(seen));
-	for (index = 0; index < state.player_count; index++)
-	{
-		struct migration_player_state player;
-		memcpy(&player, buffer + sizeof(state) + index * sizeof(player), sizeof(player));
-		if (player.player_index < 0 || player.player_index >= MAXIMUM_TRACKED_PLAYERS || seen[player.player_index])
-			return FALSE;
-		seen[player.player_index] = 1;
-	}
-	return TRUE;
-}
-
-static void distributed_checkpoint_notify(void)
-{
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-	void web_quick_play_checkpoint(unsigned long epoch, long tick, unsigned long seed);
-	struct migration_checkpoint_state state;
-	memcpy(&state, migration_checkpoint_store.complete, sizeof(state));
-	web_quick_play_checkpoint(migration_checkpoint_store.committed.epoch,
-		migration_checkpoint_store.committed.tick, state.session_seed);
-#endif
-}
-
-static int distributed_checkpoint_validate_received(void const *buffer, unsigned long size)
-{
-	return distributed_checkpoint_validate((byte const *)buffer, (long)size);
-}
-
-static void distributed_send_checkpoint(void)
-{
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-	struct migration_checkpoint_state state;
-	struct migration_checkpoint_message message;
-	long offset = sizeof(state);
-	short player_index;
-	long size;
-	if (!web_match_migration_enabled())
-		return;
-	memset(&state, 0, sizeof(state));
-	state.version = MIGRATION_CHECKPOINT_VERSION;
-	state.session_seed = (unsigned long)network_game_get_random_seed();
-	state.random_seed = *get_global_random_seed_address();
-	{
-		short network_game_client_get_machine_index(struct network_game_client *client);
-		state.host_machine_index = network_game_client_get_machine_index(global_network_game_client_get());
-	}
-	network_game_server_migration_routes(state.machine_addresses, HALO_PORT_MAXIMUM_NETWORK_MACHINES);
-	if (!network_game_server_migration_machines(&state.membership, sizeof(state.membership)))
-		return;
-	for (player_index = 0; player_index < MAXIMUM_TRACKED_PLAYERS; player_index++)
-	{
-		struct player_datum *player = distributed_player(player_index);
-		struct migration_player_state record;
-		if (!player)
-			continue;
-		memset(&record, 0, sizeof(record));
-		record.player_index = player_index;
-		record.unit_index = player->unit_index;
-		record.dead_unit_index = player->dead_unit_index;
-		record.respawn_timer = player->respawn_timer;
-		record.respawn_penalty = player->respawn_penalty;
-		record.death_time = player->death_time;
-		record.telefrag_timeout = player->telefrag_timeout;
-		record.quit_out_of_game_time = player->quit_out_of_game_time;
-		record.quit_out_of_game = player->quit_out_of_game;
-		record.is_blocking_teleporter = player->is_blocking_teleporter;
-		memcpy(migration_checkpoint_outgoing + offset, &record, sizeof(record));
-		offset += sizeof(record);
-		state.player_count++;
-	}
-	state.engine_size = game_engine_write_migration_state(migration_checkpoint_outgoing + offset,
-		MAXIMUM_GAME_STATE_SIZE);
-	if (!state.engine_size)
-		return;
-	offset += state.engine_size;
-	state.object_size = network_objects_migration_write(migration_checkpoint_outgoing + offset,
-		MIGRATION_CHECKPOINT_CAPACITY - offset);
-	if (!state.object_size)
-		return;
-	offset += state.object_size;
-	state.damage_size = network_damage_migration_write(migration_checkpoint_outgoing + offset,
-		MIGRATION_CHECKPOINT_CAPACITY - offset);
-	if (!state.damage_size)
-		return;
-	size = offset + state.damage_size;
-	memcpy(migration_checkpoint_outgoing, &state, sizeof(state));
-	message.manifest.epoch = distributed_migration_epoch();
-	message.manifest.tick = game_time_get();
-	message.manifest.size = size;
-	message.manifest.checksum = network_checkpoint_checksum(migration_checkpoint_outgoing, size);
-	for (offset = 0; offset < size; offset += MIGRATION_CHECKPOINT_FRAGMENT_SIZE)
-	{
-		long length = MIN(MIGRATION_CHECKPOINT_FRAGMENT_SIZE, size - offset);
-		message.offset = offset;
-		memcpy(message.data, migration_checkpoint_outgoing + offset, length);
-		distributed_send(&message, _distributed_message_migration_checkpoint, 0,
-			(word)(offsetof(struct migration_checkpoint_message, data) + length), _distributed_to_clients_reliably);
-	}
-	/* The current host is also a valid participant if a partition reunites. */
-	memcpy(migration_checkpoint_store.complete, migration_checkpoint_outgoing, size);
-	migration_checkpoint_store.committed = message.manifest;
-	migration_checkpoint_store.valid = 1;
-	distributed_checkpoint_notify();
-#endif
-}
-
-static void distributed_receive_checkpoint(void const *message, word size)
-{
-	struct migration_checkpoint_message part;
-	long prefix = offsetof(struct migration_checkpoint_message, data);
-	if (size <= prefix)
-		return;
-	memcpy(&part, message, prefix);
-	if (part.manifest.tick != part.header.game_time ||
-		size - prefix > MIGRATION_CHECKPOINT_FRAGMENT_SIZE)
-		return;
-	migration_checkpoint_store.validate = distributed_checkpoint_validate_received;
-	if (network_checkpoint_receive(&migration_checkpoint_store, &part.manifest,
-		distributed_migration_epoch(), part.offset, (byte const *)message + prefix, size - prefix))
-	{
-		struct migration_checkpoint_state state;
-		memcpy(&state, migration_checkpoint_store.complete, sizeof(state));
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-		network_game_client_migration_set_machines(&state.membership, sizeof(state.membership));
-		network_game_client_migration_routes(state.machine_addresses, HALO_PORT_MAXIMUM_NETWORK_MACHINES);
-		network_game_client_migration_set_host_machine((short)state.host_machine_index);
-#endif
-		distributed_checkpoint_notify();
-	}
-}
-
-boolean network_distributed_migration_ready(void)
-{
-	return network_game_distributed() && game_in_progress() && migration_checkpoint_store.valid &&
-		migration_checkpoint_store.committed.epoch == distributed_migration_epoch();
-}
-
-long network_distributed_migration_tick(void)
-{
-	if (!network_distributed_migration_ready())
-		return NONE;
-	/* Local prediction continues until transport loss is detected. Resume at
-the last host tick, not at those unconfirmed locally simulated ticks. */
-	return MAX(migration_checkpoint_store.committed.tick, distributed_host_time);
-}
-
-boolean network_distributed_migration_promote(void)
-{
-	struct migration_checkpoint_state state;
-	byte const *buffer = migration_checkpoint_store.complete;
-	long tick = network_distributed_migration_tick();
-	long elapsed;
-	long offset;
-	long index;
-	if (tick == NONE || !distributed_checkpoint_validate(buffer, migration_checkpoint_store.committed.size))
-		return FALSE;
-	memcpy(&state, buffer, sizeof(state));
-	elapsed = tick - migration_checkpoint_store.committed.tick;
-	offset = sizeof(state) + state.player_count * sizeof(struct migration_player_state);
-	if (!network_objects_migration_restore(buffer + offset + state.engine_size, state.object_size, elapsed))
-		return FALSE;
-	network_damage_migration_restore(buffer + offset + state.engine_size + state.object_size, state.damage_size);
-	for (index = 0; index < state.player_count; index++)
-	{
-		struct migration_player_state record;
-		struct player_datum *player;
-		memcpy(&record, buffer + sizeof(state) + index * sizeof(record), sizeof(record));
-		player = distributed_player(record.player_index);
-		if (!player)
-			continue;
-		/* A spawn/death received after the snapshot owns the unit binding. */
-		if (player->unit_index == record.unit_index && player->dead_unit_index == record.dead_unit_index)
-		{
-			player->respawn_timer = record.respawn_timer > 0 ? MAX(1, record.respawn_timer - elapsed) : 0;
-			player->death_time = record.death_time;
-		}
-		player->respawn_penalty = record.respawn_penalty;
-		player->telefrag_timeout = record.telefrag_timeout;
-		player->quit_out_of_game_time = record.quit_out_of_game_time;
-		player->quit_out_of_game = record.quit_out_of_game;
-		player->is_blocking_teleporter = record.is_blocking_teleporter;
-	}
-	game_engine_read_migration_state(buffer + offset, state.engine_size,
-		migration_latest_game_state_tick <= migration_checkpoint_store.committed.tick);
-	*get_global_random_seed_address() = state.random_seed;
-	game_time_set_distributed(tick);
-	return TRUE;
-}
-
-void network_distributed_migration_reset_transport(void)
-{
-	short sender;
-	short type;
-	distributed_last_sent_time = NONE;
-	memset(distributed_predictions, 0, sizeof(distributed_predictions));
-	memset(distributed_round_trips, 0, sizeof(distributed_round_trips));
-	memset(distributed_seen, 0, sizeof(distributed_seen));
-	memset(distributed_sent_statistics, 0, sizeof(distributed_sent_statistics));
-	memset(distributed_seat_disagreements, 0, sizeof(distributed_seat_disagreements));
-	for (sender = 0; sender < MAXIMUM_SENDERS; sender++)
-	{
-		distributed_batches[sender].size = 0;
-		for (type = 0; type < NUMBER_OF_DISTRIBUTED_MESSAGES; type++)
-			distributed_received_times[sender][type] = NONE;
-	}
-	distributed_statistics_due = TRUE;
-	distributed_pickup_count = 0;
-	network_objects_migration_reset_transport();
-}
-
 /* ---------- the game */
 
 /* a new map loading (game.c), before any of the new game's messages can
@@ -3659,9 +3356,6 @@ void network_distributed_new_game(
 	distributed_machines.in_tick = FALSE;
 	distributed_machines.valid = FALSE;
 	distributed_host_time = NONE;
-	migration_checkpoint_store.valid = 0;
-	migration_checkpoint_store.received = 0;
-	migration_latest_game_state_tick = NONE;
 	distributed_statistics_due = FALSE;
 	distributed_pickup_count = 0;
 	/* (each player's latest input: player_queues_new.c) */
@@ -3727,8 +3421,6 @@ void network_distributed_tick(
 		profile_scope(distributed_tick_send_pickups_section, distributed_send_pickups();)
 		if (game_time_get() % GAME_STATE_INTERVAL_TICKS == 0)
 			profile_scope(distributed_tick_send_game_state_section, distributed_send_game_state(NONE);)
-		if (game_time_get() % MIGRATION_CHECKPOINT_INTERVAL_TICKS == 0)
-			distributed_send_checkpoint();
 		network_votekick_host_tick();
 	}
 	else if (connection == _game_connection_network_client)
@@ -4345,7 +4037,6 @@ void network_distributed_handle_message(
 	case _distributed_message_player_inputs: entry_size = sizeof(struct distributed_player_input); break;
 	case _distributed_message_relayed_actions: entry_size = DISTRIBUTED_RELAYED_ACTION_MINIMUM_SIZE; break;
 	case _distributed_message_game_state:
-	case _distributed_message_migration_checkpoint:
 	case _distributed_message_objects_synchronized:
 	case _distributed_message_notice:
 	case _distributed_message_client_ready: entry_size = 0; break;
@@ -4508,11 +4199,7 @@ void network_distributed_handle_message(
 		network_objects_handle_states(entries, header.count);
 		break;
 	case _distributed_message_game_state:
-		migration_latest_game_state_tick = header.game_time;
 		game_engine_read_network_state((byte const *)entries, size - sizeof(header));
-		break;
-	case _distributed_message_migration_checkpoint:
-		distributed_receive_checkpoint(message, size);
 		break;
 	case _distributed_message_objects_synchronized:
 		network_objects_handle_synchronized();

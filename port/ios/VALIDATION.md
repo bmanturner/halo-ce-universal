@@ -737,3 +737,55 @@ selects exactly one named server once. Neither is set in ordinary launches.
   `tools/ios_test.py` suite passes. Existing campaign rendering issues and
   browser/WebRTC interoperability limitations are unchanged.
 
+
+### Merge of OpenCE `e0b581b1` (build 188) — 2026-10-11
+
+- Integration: OpenCE main `e0b581b1` (build 188), network version 26.
+  Removed from the fork: browser rooms in the Apple apps (WKWebView, `room.js`,
+  the room bridge), quick play, host migration, the browser scoreboard ping,
+  the fork's own web port and its relay, and the native server-list window
+  (it joined through quick play); the in-game server browser is used. Added:
+  the Apple hosts build upstream's `posix_dtls.c` with Mbed TLS
+  (`port/apple/dtls.cmake`), so the Apple apps accept browsers' WebRTC. Menus:
+  `ios` is a fourth `platform` place; settings have a `_platform_ios` bit.
+- Builds (this Mac, Homebrew clang 21, so without PGO): signed iPad app
+  (Release, team build), macOS app, Apple TV app (ANGLE, maps embedded,
+  installed), and from the same tree upstream's web build (`ninja web`) and
+  `ninja android`.
+- Gates: `tools/ios_test.py` passes (guest ABI/memory including the Custom
+  Edition range, audio, display, XISO, shader cache, native TCP/UDP). pytest:
+  test_touch_menu, test_cache_file_formats, test_bmp_files and test_web_build
+  pass, except `test_the_sockets_inside_the_page`, which fails on macOS on
+  upstream's own tree too. test_profile's two failures are the platform's (ASan
+  leak detection is unsupported on macOS; the iOS-configured build.ninja's
+  `-mcpu=apple-m4`). `node --test` on port/web/tests sw/xiso: 13 pass.
+  `tools/test_touch_layout.py` passes. `tools/test_linux_port.py`: 18 pass; its
+  Linux-toolchain checks fail on macOS as on upstream (xdk headers, weak
+  references, system link bots, p2p signatures). `tools/harness` needs a 32-bit
+  host and does not run on Apple silicon.
+- Devices: iPad Pro 11-inch (4th generation, iPad14,3, iPadOS 27.0, 24A435);
+  Apple TV 4K (3rd generation, AppleTV14,1, tvOS 27.0, 24J361).
+- iPad hosting Blood Gulch (`debug.network_test host:bloodgulch`, 75 s):
+  internet play invite and STUN mapping, the game ran, exit 0.
+- Browser to native over WebRTC: a headless Chromium running upstream's web
+  build joined the iPad's game by its invite (`?join=`). The iPad logged
+  "WebRTC connected to player …'s browser" and both logged players 0 and 1
+  playing. The same with the Apple TV hosting. Repeated on the final build for
+  the iPad.
+- Apple TV to a native upstream host: in a server-browser test (`browse`) the
+  Apple TV joined a public dedicated game ("[D] Big Team", Beaver Creek)
+  instead of the test's own, reached it over internet play, loaded the map and
+  spawned (about 18 seconds, 1081 packets sent, 1137 received) before it was
+  stopped.
+- Screenshots (`xcrun devicectl device capture screenshot`): in a game on both
+  devices the HUD numbers, shield and health meters, motion tracker and weapon
+  draw correctly. Video Setup shows V-SYNC, RENDER HEIGHT, FRAME RATE,
+  GRAPHICS and FOV AND VIEWMODELS on both; the iPad's FOV AND VIEWMODELS screen
+  shows upstream's ARM SHIELDS, LEGS and SHIELD COLOR.
+- Existing installs: config.toml files from earlier versions say
+  `network.online = false`; the Apple host still sets `HALO_NET_ONLINE=1`, so
+  internet play stays on after an update.
+- Not verified: system link on the local network between the iPad and the
+  Apple TV (the Apple TV kept "searching for games"; never verified before);
+  an invite join between two Apple devices; rumble/remote; the Mac app was
+  built but not run.

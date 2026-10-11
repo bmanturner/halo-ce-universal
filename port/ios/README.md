@@ -66,17 +66,13 @@ memory is used.
 ## Simulator smoke tests
 
 After installing the simulator app and importing an ISO through the app,
-these explicit launch settings bypass the room chooser for repeatable tests:
+launch it and terminate it between launches:
 
 ```sh
 xcrun simctl launch SIMULATOR_UDID org.haloce.ios
-SIMCTL_CHILD_HALO_IOS_TEST_ROOM=YOUR_TEST_ROOM xcrun simctl launch SIMULATOR_UDID org.haloce.ios
 ```
 
-Terminate the app between launches. These settings apply only to simulator
-builds; normal launches open the game menus. `HALO_IOS_TEST_ROOM_UI=1`
-opens the room form with its keyboard for simulator layout inspection. Use a unique room code
-and the same code in a browser build from the pinned PR #12 source.
+Normal launches open the game menus.
 
 ## Install and add game data
 
@@ -130,7 +126,7 @@ xcrun devicectl device install app --device DEVICE_UDID \
 xcrun devicectl device process launch --device DEVICE_UDID com.yourname.haloce
 ```
 
-Downloaded unsigned IPAs (see Download in the [main README](../../README.md))
+Downloaded unsigned IPAs (see Releases in [FORK.md](../../FORK.md#releases))
 must first be signed with your own Apple account.
 Use [`tools/ios_resign.sh`](../../tools/ios_resign.sh) with your local signing
 identity and device provisioning profile; see the [re-signing and installation
@@ -245,8 +241,8 @@ the Files picker. On iPadOS 26 and later it also requests the interface
 orientation lock for the full-screen scene; portrait is excluded from the
 app's orientation masks. iPadOS controls windowed multitasking and may
 letterbox the landscape app when a full-screen orientation lock is unavailable.
-Public-server discovery and native UDP/KCP connections are enabled by default.
-Browser rooms remain an optional, separate transport described below. Bink intro videos remain unsupported by the upstream port.
+Public-server discovery and native UDP/KCP connections are always on in the Apple apps.
+Bink intro videos remain unsupported by the upstream port.
 
 ## Public server browser
 
@@ -256,7 +252,7 @@ on-screen controls on iOS; macOS also supports mouse and keyboard. Select a
 server, inspect its game details, then join. The list shows maps, game types,
 player counts and connection status, with Refresh and Back buttons.
 Only listings with this build's network version (`HALO_PORT_NETWORK_VERSION`,
-currently 25) are shown, so hosts must run a current upstream build. A
+currently 26) are shown, so hosts must run a current upstream build. A
 matching map from the user's imported image is required; discovery does not
 guarantee reachability. Keep the app in the foreground while connecting and
 playing: internet play drops a peer it has not heard from in 20 seconds, so
@@ -270,20 +266,20 @@ and reconnects the MQTT brokers at once (`p2p.c`, `p2p_signal.c`), so the
 server browser can join without restarting the app. TCP sockets are not
 recreated: a connection open during the suspension is lost.
 
-This integrates OpenCE `main` through `9da2a45f` (OpenCE build 177), including
+This integrates OpenCE `main` through `e0b581b1` (OpenCE build 188), including
 the in-game server browser, online co-op campaign, online split screen (ADD
 PLAYER in the lobby, one extra controller per player), password-protected
 lobbies, vote kick, voice chat, field of view and viewmodel settings (Video
-Settings > FOV AND VIEWMODELS), a GRAPHICS screen, settings from the campaign's
+Settings > FOV AND VIEWMODELS, with LEGS and ARM SHIELDS), SHIELD COLOR and
+SHIELD GLOW settings, a GRAPHICS screen, settings from the campaign's
 pause menu, high-resolution controller buttons and weapon reticles, and
 upstream's renderer, audio, leak and hardening fixes. Upstream's Android touch
 menus and on-screen controls are not used on iOS, which keeps its own overlay
 (`host/host_touch.m`). Discovery uses Ed25519 signatures, MQTT brokers (the
 bundled `brokers.txt`, copied beside `config.toml` at launch) and invite
 joining. Connections use the shared STUN, UDP tunnel and KCP implementation;
-automatic router port forwarding is not implemented on Apple. The old
-UIKit/AppKit list remains a diagnostic fallback for Xbox menus and automated
-native-join tests.
+automatic router port forwarding is not implemented on Apple. With
+`display.menus = "xbox"` the same in-game server browser is used.
 
 Voice chat uses SDL's default input and output: the Apple guest does not
 enumerate SDL audio devices. iOS hides the device rows; the Mac app, which
@@ -313,69 +309,23 @@ community maps draw default textures.
 Upstream commit `c9ee319a` added 28 bytes of PC game rules to the settings
 record (network version 11). The relevant rule logic and record layout are
 included. Receiving older settings records supplies the original default
-rules. In browser-room mode, Apple emits the older settings layout;
-mixed-version checkpoint/migration compatibility has not been revalidated.
-The browser-only migration checkpoint message is numbered 83, past upstream's
-message kinds, so native hosts and clients keep upstream's numbering.
+rules.
 
-## Browser multiplayer (experimental)
+### Internet play with browsers
 
-This integration is based on [PR #12](https://github.com/cybersecurity/halo-ce-universal/pull/12)
-at `eaa82e6803f3d3e67c91d7f2fa2b15ee04e195f5`. Prefer a web client built
-from this branch: rooms carry the native protocol, now network version
-**25**. The public web demos checked on 2026-10-04 use network version **6**
-and cannot join this app. Previous pinned-build crossplay/migration results
-predate the upstream merge and are historical evidence, not validation of
-this build.
-Both players need matching original Xbox maps. Protocol compatibility does not
-establish compatibility between different game-data releases.
-
-Enable **Browser rooms (experimental)** in Settings (shake on iOS), then
-relaunch. Socket transport is fixed at startup so existing sockets cannot
-change underneath the game. Select **Multiplayer → Join Game → Server Browser** to open the native
-online-room form, then enter the web player's room code and choose **Join room**.
-With `display.menus = "xbox"`, the equivalent entry is **System Link**.
-The keyboard stays closed until the code field is tapped. The form scrolls,
-and Cancel/Join stay above the keyboard in landscape.
-The shared room controller elects a host and starts quick play, initially
-Beaver Creek Slayer. A native player can be elected host or join a web host.
-Cancel returns to the menus. After leaving a match, reopen the Server Browser to
-choose another room. Keep the app in the foreground.
-Background survival and recovery on physical devices remain unverified.
-
-The game, renderer, audio and memory runtime are compiled native ARM64 code.
-A retained `WKWebView` runs the **bundled, unchanged** `port/web/site/net.js`
-for encrypted MQTT signaling, WebRTC channels, election and host migration.
-There is no WASM game runtime in the iOS app. `network/room.js` exchanges bounded
-packet batches with `network/room_bridge.c`; `web_net.c` implements the same
-virtual sockets as the browser. Reliable streams and unreliable datagrams use
-the same wire framing. Game-thread control imports carry hold, reconnect,
-migration, cancellation, checkpoint reports and ping tables across the ILP32 ABI.
-
-This WebKit dependency avoids maintaining a second version of the room protocol.
-Packet batching and base64 copying add overhead that has not been profiled in
-a full match. If WebKit terminates, the game is held and the app must be restarted.
-The room view stays attached to the foreground scene below the game window.
-
-The shared transport uses public signaling/STUN services. Networks requiring
-TURN need the same TURN configuration as the web client. Optionally place this
-in `Documents/browser-room.json` (use your own server and credentials):
-
-```json
-{"turn":{"urls":["turn:relay.example.com:3478"],"username":"player","credential":"secret"}}
-```
-
-This file stays outside the bundle and repository. The native public-server
-protocol is a different transport; the app does not bridge native servers to WebRTC rooms.
+Browsers join through upstream's WebRTC support: the game side is
+`port/linux/src/p2p_webrtc.c`, and the DTLS under it is `posix_dtls.c`, linked
+into the app's host with the vendored mbedtls (`port/third_party/mbedtls`) like
+the other `posix_*.c` files. There is no WebKit or JavaScript in the app and no
+separate browser transport. Both players need matching original Xbox maps.
 
 ### Provenance and scope
 
 The signed ARM64 ILP32 runtime, memory layout, UIKit input, GLES renderer,
 XISO importer, and build tooling are imported/adapted from
 [NicholasDominici/halo-ce-ios](https://github.com/NicholasDominici/halo-ce-ios/tree/3f2c14101d3ae1c7f0c0a11993a43407fadbeb46),
-branch `ios-port`. Integration changes keep PR #12's current game/network source,
-use its musl math, preserve other platforms, and connect the Apple runtime to
-browser rooms. Apple distribution builds omit the embedded HUD/title/font
+branch `ios-port`, on top of OpenCE's game and network source with its musl
+math; other platforms are preserved. Apple distribution builds omit the embedded HUD/title/font
 replacements. This target builds iPhone/iPad apps; [port/macos](../macos/README.md)
 builds the native Mac app and [port/tvos](../tvos/README.md) the Apple TV app.
 A dedicated visionOS product remains open.

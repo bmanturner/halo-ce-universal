@@ -47,3 +47,8 @@ slice. It ships the same notices.
   chat speaker images in the embedded menus. See
   `port/assets/icons/lucide/LICENSE`; that license is included in both app
   bundles as Licenses/Lucide.txt.
+- Mbed TLS 3.6.7 (Apache-2.0 OR GPL-2.0-or-later; used here under
+  Apache-2.0), vendored unchanged in `port/third_party/mbedtls`, provides the
+  DTLS that internet play uses with browsers (`port/linux/src/posix_dtls.c`,
+  linked into the app's host). See `port/third_party/mbedtls/LICENSE`; that
+  license is included in the app bundles as Licenses/Mbed-TLS.txt.

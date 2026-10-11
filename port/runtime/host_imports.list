@@ -53,11 +53,6 @@ host_gl_wait_frame
 host_errno
 
 host_sdl_show_simple_message_box
-host_ios_room_poll
-host_ios_room_report
-host_ios_room_ping
-
-host_ios_room_open
 host_ios_render_height
 host_ios_set_frame_rate
 host_ios_metalfx_present

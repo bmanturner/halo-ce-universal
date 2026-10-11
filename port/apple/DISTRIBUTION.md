@@ -7,7 +7,7 @@ legal opinion or permission to distribute the reconstructed game code.
 ## What the packages contain
 
 Apple builds embed the compiled native runtime and reconstructed game code,
-SDL, ANGLE, bundled room-transport JavaScript, open-source dependency notices,
+SDL, ANGLE, mbedtls, open-source dependency notices,
 an original abstract ringworld icon, and the upstream XML menus and redrawn
 menu graphics (`port/assets/menus`). They do not embed a user's disc image, maps,
 saves, or the repository's replacement HUD/title/font assets. Original game images,

@@ -382,7 +382,7 @@ void interface_draw_fullscreen_overlays(
 	interface_splitscreen_render();
 	hud_render_timer();
 #ifndef HALO_IOS
-	/* Keep developer console output and performance counters off the iOS
+	/* port: Keep developer console output and performance counters off the iOS
 	   game picture. Diagnostics remain available in the log files. */
 	terminal_draw();
 	main_framerate_render();

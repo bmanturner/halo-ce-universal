@@ -1,6 +1,5 @@
 /* Real Darwin sockets through the game's 32-bit, Winsock-shaped boundary. */
 #include "posix.h"
-#include "network_mode.h"
 #include <arpa/inet.h>
 #include <stdarg.h>
 #include <assert.h>
@@ -10,7 +9,6 @@
 struct address {uint16_t family,port;uint32_t ip;unsigned char padding[8];};
 void host_logf(int priority,const char *format,...) {(void)priority;va_list ap;va_start(ap,format);vfprintf(stderr,format,ap);fputc('\n',stderr);va_end(ap);}
 int main(void) {
-    assert(!halo_browser_rooms);
     struct address addr={2,0,htonl(INADDR_LOOPBACK),{0}},peer;
     int size=sizeof(addr),type=0,type_size=sizeof(type);
     int listener=posix_socket(2,1,0);assert(listener>=0);

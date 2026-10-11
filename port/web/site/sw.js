@@ -3,46 +3,28 @@ SW.JS
 
 The site's service worker:
 
-- it serves every page and script with the headers that make the site
+- it serves every response with the headers that make the page
   cross-origin isolated (Cross-Origin-Opener-Policy and
   Cross-Origin-Embedder-Policy), which SharedArrayBuffer, and so the game's
-  threads, need; static hosts such as GitHub Pages cannot send them;
-- it keeps the site's files for use offline, so the installed web app
-  starts without a network. version.json names the build: the files of one
-  build are kept together, and a new build replaces them only as a whole
-  (when the page asks, after the player agrees to update).
+  threads, need; GitHub Pages cannot send them. The first visit loads once
+  without them, then again under this worker (app.js);
+- it keeps a build's files, so that the site starts without the network
+  and a build is never mixed with another: version.json names the build and
+  its files; they are fetched together into a cache of their own, and a new
+  build replaces them as a whole only when the page asks (once the player
+  agrees). version.json?latest always asks the network, so that the page can
+  tell a new build is out.
 */
 
 'use strict';
 
-const CACHE_PREFIX = 'halo-web-';
-const META_CACHE = 'halo-web-meta';
-const SHELL = [
-  './',
-  'index.html',
-  'app.js',
-  'input.js',
-  'net.js',
-  'cache.js',
-  'vendor/sha256.js',
-  'site-config.js',
-  'native-invite.js',
-  'gateway.js',
-  'style.css',
-  'xiso-worker.js',
-  'audio-worklet.js',
-  'halo.js',
-  'halo.wasm',
-  'manifest.webmanifest',
-  'icons/icon-180.png',
-  'icons/icon-192.png',
-  'icons/icon-512.png',
-  'version.json',
-];
+const CACHE_PREFIX = 'opence-web-';
+const META_CACHE = 'opence-web-meta';
 
 async function networkVersion() {
   const response = await fetch('version.json', { cache: 'no-store' });
-  return (await response.json()).version;
+  if (!response.ok) throw new Error('version.json: HTTP ' + response.status);
+  return response.json();
 }
 
 async function activeVersion() {
@@ -56,13 +38,14 @@ async function setActiveVersion(version) {
   await meta.put('active', new Response(JSON.stringify({ version })));
 }
 
-// downloads a build's files into a cache of their own, then makes it the
-// one served and drops the others
-async function installVersion(version) {
-  const name = CACHE_PREFIX + version;
+// a build's files into a cache of their own; then it is the one served, and
+// the others go
+async function installVersion(stamp) {
+  const name = CACHE_PREFIX + stamp.version;
   const cache = await caches.open(name);
-  await cache.addAll(SHELL.map((path) => new Request(path, { cache: 'no-store' })));
-  await setActiveVersion(version);
+  const files = ['./', 'version.json', ...stamp.files.filter((file) => file !== 'version.json')];
+  await cache.addAll(files.map((path) => new Request(path, { cache: 'no-store' })));
+  await setActiveVersion(stamp.version);
   for (const other of await caches.keys()) {
     if (other.startsWith(CACHE_PREFIX) && other !== name && other !== META_CACHE) await caches.delete(other);
   }
@@ -73,8 +56,8 @@ self.addEventListener('install', (event) => {
     try {
       if (!(await activeVersion())) await installVersion(await networkVersion());
     } catch {
-      // offline or a partial deployment: files come from the network until
-      // a later start caches them
+      // offline, or a deployment under way: the network serves until a later
+      // visit caches a build
     }
     await self.skipWaiting();
   })());
@@ -99,8 +82,8 @@ async function cachedResponse(request) {
   const cache = await caches.open(CACHE_PREFIX + version);
   const url = new URL(request.url);
   let response = await cache.match(request, { ignoreSearch: true });
-  if (!response && request.mode === 'navigate' && url.pathname.endsWith('/')) {
-    response = await cache.match('index.html');
+  if (!response && (request.mode === 'navigate' || url.pathname.endsWith('/'))) {
+    response = await cache.match('./', { ignoreSearch: true });
   }
   return response;
 }
@@ -108,7 +91,6 @@ async function cachedResponse(request) {
 async function respond(request) {
   const url = new URL(request.url);
   if (url.pathname.endsWith('/version.json') && url.searchParams.has('latest')) {
-    // the network's, so the page can tell a new build is out
     return isolated(await fetch('version.json', { cache: 'no-store' }));
   }
   const cached = await cachedResponse(request);
@@ -117,8 +99,8 @@ async function respond(request) {
     return isolated(await fetch(request));
   } catch (error) {
     if (request.mode === 'navigate') {
-      const shell = await cachedResponse(new Request('index.html'));
-      if (shell) return isolated(shell);
+      const page = await cachedResponse(new Request('./'));
+      if (page) return isolated(page);
     }
     throw error;
   }
@@ -144,3 +126,8 @@ self.addEventListener('message', (event) => {
     })());
   }
 });
+
+// (for the tests: port/web/tests)
+if (typeof module !== 'undefined') {
+  module.exports = { isolated, installVersion, activeVersion, cachedResponse, respond, CACHE_PREFIX };
+}

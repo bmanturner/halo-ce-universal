@@ -110,20 +110,8 @@ void host_gl_wait_frame(unsigned int slot);
 
 int host_sdl_show_simple_message_box(unsigned int flags, const char *title, const char *message);
 
-/* Browser room control uses only fixed-width scalars at the ABI boundary. */
-void host_ios_room_open(void);
-int host_ios_room_poll(unsigned int *command);
-void host_ios_room_report(const char *json);
-int host_ios_room_ping(unsigned int address, unsigned int host, unsigned int epoch);
-
 unsigned int host_ios_render_height(void);
 void host_ios_set_frame_rate(unsigned int frames_per_second);
 int host_ios_metalfx_present(unsigned int texture, unsigned int width, unsigned int height, unsigned int output_width, unsigned int output_height);
-
-int host_ios_browser_mode(void);
-void host_ios_browser_open(void);
-int host_ios_browser_update(const void *listings, int count, void *chosen);
-void host_ios_browser_close(int joining);
-void host_ios_browser_error(const char *message);
 
 #endif

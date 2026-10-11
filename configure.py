@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 # root build script: writes build.ninja for the native ports (Linux, Windows,
-# Android)
+# Android) and the web port
 
 import argparse
 import io
@@ -33,7 +33,7 @@ parser.add_argument(
 parser.add_argument(
     "--release",
     action="store_true",
-    help="release builds (Linux, Windows, Android): assertions are not checked",
+    help="release builds (Linux, Windows, Android, web): assertions are not checked",
 )
 parser.add_argument(
     "--profile",
@@ -88,7 +88,7 @@ parser.add_argument(
 parser.add_argument(
     "--web-emcc",
     type=str,
-    help="Emscripten's emcc for `ninja web` (default: emcc on the PATH, or ~/emsdk)",
+    help="Emscripten's emcc for `ninja web` (default: emcc on the PATH, then EMSDK's or ~/emsdk's)",
 )
 parser.add_argument('--ios', action='store_true', help='generate native iOS ARM guest rules')
 parser.add_argument('--ios-llvm', default='/opt/homebrew/opt/llvm')

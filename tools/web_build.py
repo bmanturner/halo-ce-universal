@@ -1,92 +1,98 @@
 """Ninja rules for the web build (``ninja web``).
 
-The web port (port/web/README.md) runs the game as WebAssembly in a browser,
-so it installs on an iPhone or iPad as a home-screen web app. wasm32 is an
-ILP32 target (32-bit int, long and pointers), which the game's data formats
-need, and the Xbox memory window at 0x80000000 lies inside a 4 GB wasm
-memory, so the game code runs as it does on the other ports.
+The web port (port/web/README.md) runs the game as WebAssembly in a
+browser. wasm32 is an ILP32 target (32-bit int, long and pointers), as the
+game's data formats need, and the Xbox window at 0x80000000 lies inside the
+WebAssembly memory, which is made 0x88000000 bytes so that the window is its
+top 128 MB (port/linux/src/platform.h). This graph builds
 
-The game follows the Android port's code paths (HALO_ANDROID, HALO_ARM64_GUEST,
-HALO_GLES: OpenGL ES 3,
-the display's shape, the configuration file in the data folder) with
-HALO_WEB for what differs in a browser. This graph builds
+- the game sources and the port's game units (port/linux/game);
+- the platform layer shared with Linux (port/linux/src), with the OpenGL ES
+  renderer (HALO_GLES, WebGL 2) and HALO_WEB for what a browser does
+  differently, less the units a browser has no use for (WEB_EXCLUDE);
+- the web runtime (port/web/src): the entry point, which mounts the
+  browser's storage, the sockets the game opens among themselves, and the
+  memory watch by page contents;
+- SDL 3 as an Emscripten port (port/web/halo_sdl3.py), the release the
+  other builds use;
 
-- the game sources and the platform layer shared with Linux
-  (port/linux/src), compiled by Emscripten;
-- the web runtime (port/web/src): the SDL3 functions the platform layer
-  calls, over the browser, and the services the Android host supplies;
+and links build/web/site/halo.js and halo.wasm beside the page, its service
+worker and the disc image importer (port/web/site), with version.json naming
+the build (port/web/stamp_version.py). The site needs nothing else: the
+menus, fonts and HUD are embedded as in the other builds, and the player's
+own disc image gives the maps.
 
-and links build/web/site/halo.js and halo.wasm, next to the page and the
-service worker from port/web/site.
-
-Like the other native builds, this is independent of the byte-matching
-graph.
+Calls in WebAssembly must match the callee's type exactly, where x86
+shrugged. The link checks every direct call against its callee's type and
+fails on a mismatch (wasm-ld's warning made an error, --fatal-warnings),
+which the sources then correct (HALO_WEB, or a declaration given its
+definition's type); the game files that call variadic functions without a
+prototype get one, as on Android (VARIADIC_PROTOTYPE_FILES); calls through
+function pointers are adapted in the sources where the type differs. Units
+are not optimised together at the link (no -flto): LLVM's link-time
+optimisation turns a call whose declared parameter types differ only in
+width (a boolean passed where the definition takes a short, which
+WebAssembly passes alike) into a trap.
 """
 
+import json
 import os
 import shutil
-import subprocess
-import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .linux_build import (MUSL_MATH_DIR, XDK_INCLUDE, ZLIB_DEFINES, ZLIB_DIR, ZLIB_SOURCES, compile_launcher,
-                          game_defines_and_includes, game_sources, musl_math_sources, opus_cflags, opus_sources,
-                          xdk_headers)
+from .android_build import VARIADIC_PROTOTYPE_FILES
+from .embed_assets import hud_assets_build, hud_configure_inputs
+from .linux_build import (EXPAT_DIR, EXPAT_SOURCES, KCP_DIR, MONOCYPHER_DIR, MUSL_MATH_DIR, TOML_DIR, XDK_INCLUDE,
+                          ZLIB_DEFINES, ZLIB_DIR, ZLIB_SOURCES, compile_launcher, configuration_defines,
+                          game_defines_and_includes, game_sources, musl_math_cflags, musl_math_sources,
+                          opus_cflags, opus_sources, updater_defines, xdk_headers)
 from .ninja_syntax import Writer
-from .embed_assets import hud_assets_build
-from .linux_build import EXPAT_DIR, EXPAT_SOURCES
 
 PORT_DIR = Path("port/web")
 LINUX_DIR = Path("port/linux")
 ANDROID_DIR = Path("port/android")
-BUILD = Path("build/web")
-THIRD_PARTY = BUILD / "third_party"
-TOML_DIR = Path("port/third_party/tomlc17")
-KCP_DIR = Path("port/third_party/kcp")
-# the SDL3 headers only: the platform layer's types and constants (the
-# functions are port/web/src/web_sdl.c)
+PORT_CONFIG = LINUX_DIR / "port.json"
+SDL_PORT = PORT_DIR / "halo_sdl3.py"
+# (the release port/web/halo_sdl3.py fetches, as the other builds')
 SDL_TAG = "release-3.4.16"
-SDL_DIR = THIRD_PARTY / "SDL3"
-SDL_URL = "https://github.com/libsdl-org/SDL.git"
+# the page's fonts, the menus' own (port/assets/fonts)
+SITE_FONTS = ["OpenCE-Regular.ttf", "Overpass-750.ttf"]
+# the memory watch by page contents, shared with the Android host
+# (port/web/src/web_memory_watch.c)
+WATCH_HASH = ANDROID_DIR / "host" / "host_watch_hash.c"
 
-# The Xbox window (port/linux/src/platform.h) is the top of the wasm memory:
-# 0x80000000 to 0x88000000. The C heap has everything below it
-# (web_memory.c keeps sbrk out of the window).
+# The Xbox window (port/linux/src/platform.h) is the top 128 MB of the
+# WebAssembly memory, 0x80000000 to 0x88000000; the C heap has everything
+# below it (port/web/src/web_main.c).
 WEB_MEMORY_BYTES = 0x88000000
 
+# The ABI the game was written for, as the other builds reproduce it
+# (tools/linux_build.py LINUX_ABI_FLAGS): 16-bit wchar_t, MSVC's extensions,
+# common symbols, no optimisations that assume the absence of what MSVC
+# tolerated, and no fused multiply-adds (the same results on every port).
+# wasm32 aligns doubles and 64-bit integers to 8 bytes already, as MSVC.
 WEB_ABI_FLAGS = [
-    "-pthread",
-    # The web build takes the ILP32 guest's code paths (wasm32 is ILP32 like
-    # the Android guest), the ES renderer's (WebGL 2) and the Android app's.
-    "-DHALO_ANDROID=1",
-    "-DHALO_ARM64_GUEST=1",
     "-DHALO_GLES=1",
     "-DHALO_WEB=1",
     "-fshort-wchar",
-    # the Win32 ABI returns small structures and unions in registers, and the
-    # game calls functions that return unions through pointers typed as
-    # returning long (hs_runtime.c): the multivalue ABI passes and returns
-    # them as values too, so the two agree in WebAssembly
-    "-Xclang", "-target-abi", "-Xclang", "experimental-mv",
-    "-mmultivalue",
+    "-ffp-contract=off",
+    "-pthread",
+    "-msimd128",
     "-mbulk-memory",
     "-mnontrapping-fptoint",
-    "-msimd128",
-    "-ffp-contract=off",
     "-O2",
-    # one module at the link: LLVM then gives each call to a function
-    # declared with another signature (C89's implicit declarations, which x86
-    # tolerates) a wrapper that adapts it, where WebAssembly would trap
-    "-flto",
+    "-g2",
 ]
 
-GAME_CODE_FLAGS = [
+WEB_CODE_FLAGS = [
     "-fms-extensions",
     "-fcommon",
     "-fno-strict-aliasing",
     "-fwrapv",
     "-fno-delete-null-pointer-checks",
+    # Emscripten's C library has a 32-bit wchar_t: no loop turned into a call
+    # to its wide string functions
     *(f"-fno-builtin-{name}" for name in (
         "wcslen", "wcsnlen", "wcschr", "wcsrchr", "wcscmp", "wcsncmp", "wcscpy",
         "wcsncpy", "wcscat", "wcsncat", "wmemchr", "wmemcmp", "wmemcpy",
@@ -106,64 +112,27 @@ GAME_FLAGS = [
     "-Wno-error=return-type",
 ]
 
-# game files that call variadic functions without a prototype in scope
-# (the Android build's list, tools/android_build.py): a WebAssembly call must
-# match the callee's signature exactly
-VARIADIC_PROTOTYPE_FILES = {
-    "source/ai/action_uncover.c", "source/ai/ai.c", "source/ai/ai_debug.c",
-    "source/bungie_net/common/public_key_crypt.c", "source/camera/editor_flying_camera.c",
-    "source/game/cheats.c", "source/game/game_engine.c", "source/game/players.c",
-    "source/hs/hs.c", "source/interface/hud_nav_points.c",
-    "source/networking/telnet_console.c", "source/rasterizer/xbox/rasterizer_xbox_errors.c",
-    "source/render/render.c",
-    # (and for WebAssembly, a call that passes fewer arguments than a
-    # variadic function's fixed ones)
-    "source/interface/ui_widget_game_data_input_functions.c",
-}
-
 # game files that call C library functions without a prototype, whose
-# WebAssembly signatures differ from the undeclared ones (time_t is 64-bit)
+# WebAssembly types differ from the undeclared ones (time_t is 64-bit)
 PROTOTYPE_FILES = {
     "source/bungie_net/common/random_numbers.c": "time.h",
 }
 
-# platform files the browser does without
-PLATFORM_EXCLUDE = {
-    "memory_watch.c",   # page protection: port/web/src/web_memory_watch.c
-    "posix_update.c",   # the desktop self-updater
-    "posix_upnp.c",
-    "updater.c",
-    "xiso.c",           # the page extracts the maps (port/web/site/xiso.js)
-    "posix_trace_marker.c",  # Linux's GPU driver trace_marker refusal
+# platform units a browser does without (updater.c and xiso.c compile to
+# nothing there: the site updates itself, and the page reads the disc image)
+WEB_EXCLUDE = {
+    "memory_watch.c",       # page protection: port/web/src/web_memory_watch.c
+    "posix_net.c",          # sockets: port/web/src/web_net.c
+    "posix_update.c",       # the self-updater's downloads
+    "posix_upnp.c",         # internet play's router (port/web/src/web_stubs.c)
+    "posix_trace_marker.c", # a Linux GPU driver's trace markers
+    "posix_dtls.c",         # internet play's WebRTC: the browser's own
+    "p2p_webrtc.c",         # (port/web/src/web_p2p.c)
 }
 
-LINK_FLAGS = [
-    "-pthread",
-    "-O2",
-    "-flto",
-    "-mmultivalue",
-    "-sPROXY_TO_PTHREAD=1",
-    "-sEXIT_RUNTIME=0",
-    f"-sINITIAL_MEMORY={WEB_MEMORY_BYTES}",
-    "-sALLOW_MEMORY_GROWTH=0",
-    "-sSTACK_SIZE=8MB",
-    "-sDEFAULT_PTHREAD_STACK_SIZE=1MB",
-    "-sPTHREAD_POOL_SIZE=10",
-    "-sWASMFS=1",
-    "-sMIN_WEBGL_VERSION=2",
-    "-sMAX_WEBGL_VERSION=2",
-    "-sGL_ENABLE_GET_PROC_ADDRESS=1",
-    "-sENVIRONMENT=web,worker",
-    "-sEXPORTED_FUNCTIONS=_main,_malloc,_free,_web_shared_state,_web_shared_offsets,_web_quick_play_cancel,_web_quick_play_migrate,_web_quick_play_reconnect,_web_quick_play_hold,_web_quick_play_set_address,_web_quick_play_set_epoch",
-    "-sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAP32,HEAPF32,wasmMemory,UTF8ToString,stringToUTF8,lengthBytesUTF8",
-    "-sINCOMING_MODULE_JS_API=print,printErr,locateFile,onAbort,preRun,arguments,mainScriptUrlOrBlob,"
-    "instantiateWasm,wasmMemory,setStatus,monitorRunDependencies,onRuntimeInitialized",
-    "-sSTACK_OVERFLOW_CHECK=0",
-    # function names in stack traces (the name section only)
-    "--profiling-funcs",
-    "-sASSERTIONS=0",
-    "-lGL",
-]
+# the web runtime's units that, like posix_*.c, are the C library's side of
+# the platform layer, with its own ABI
+WEB_POSIX_SOURCES = {"web_main.c", "web_net.c", "web_stubs.c", "web_touch.c"}
 
 
 def _quote(path: Any) -> str:
@@ -171,58 +140,50 @@ def _quote(path: Any) -> str:
     return f'"{text}"' if " " in text else text
 
 
-def _find_emcc(sln: Any) -> Optional[str]:
+def find_emcc(sln: Any) -> Optional[str]:
+    """--web-emcc's, emcc on the PATH, or ~/emsdk's"""
     explicit = getattr(sln, "web_emcc", None)
     if explicit:
         return explicit
     found = shutil.which("emcc")
     if found:
         return found
-    for candidate in (Path.home() / "emsdk" / "upstream" / "emscripten" / "emcc",
-                      Path(os.environ.get("EMSDK", "/nonexistent")) / "upstream" / "emscripten" / "emcc"):
-        if candidate.is_file():
-            return str(candidate)
+    for root in (os.environ.get("EMSDK"), str(Path.home() / "emsdk")):
+        if root and (Path(root) / "upstream" / "emscripten" / "emcc").is_file():
+            return str(Path(root) / "upstream" / "emscripten" / "emcc")
     return None
 
 
-def fetch_third_party() -> None:
-    """Download the SDL3 headers (configure time, once)."""
-    THIRD_PARTY.mkdir(parents=True, exist_ok=True)
-    if not SDL_DIR.is_dir():
-        print(f"Cloning SDL3 {SDL_TAG} (headers)")
-        subprocess.run(["git", "clone", "-q", "--depth", "1", "--branch", SDL_TAG, SDL_URL, str(SDL_DIR)],
-                       check=True)
+def site_sources() -> List[Path]:
+    """the page's files (port/web/site), copied beside halo.js"""
+    return sorted(path for path in (PORT_DIR / "site").rglob("*") if path.is_file())
 
 
 def web_configure_inputs() -> List[Path]:
-    return [Path(__file__), PORT_DIR / "src", PORT_DIR / "site", LINUX_DIR / "src"]
+    return [Path(__file__), PORT_DIR / "src", PORT_DIR / "site", PORT_DIR / "site" / "icons", SDL_PORT,
+            *hud_configure_inputs()]
 
 
 def generate_web_build(n: Writer, sln: Any) -> None:
-    config_path = LINUX_DIR / "port.json"
-    if not config_path.is_file() or not (PORT_DIR / "src").is_dir():
+    if not PORT_CONFIG.is_file() or not (PORT_DIR / "src").is_dir():
         return
-    emcc = _find_emcc(sln)
+    emcc = find_emcc(sln)
     if not emcc:
-        n.comment("Web build: no Emscripten found (put emcc on the PATH or pass --web-emcc)")
+        n.comment("Web build: no Emscripten found (put emcc on the PATH, or pass --web-emcc)")
         return
-    try:
-        fetch_third_party()
-    except (subprocess.CalledProcessError, OSError) as error:
-        print(f"Web build disabled: cannot fetch the SDL3 headers ({error})", file=sys.stderr)
-        return
-    import json
-    config: Dict[str, Any] = json.loads(config_path.read_text(encoding="utf-8"))
-
-    obj_dir = BUILD / "obj"
-    site_dir = BUILD / "site"
-    semantics_header = Path("build/linux/halo_msvc_semantics.h")
-    platform_semantics_header = Path("build/linux/platform_msvc_semantics.h")
-    prefix_header = LINUX_DIR / "include" / "halo_linux_prefix.h"
+    config: Dict[str, Any] = json.loads(PORT_CONFIG.read_text(encoding="utf-8"))
     release = getattr(sln, "port_release", False)
 
+    build_dir: Path = sln.build_dir / "web"
+    obj_dir = build_dir / "obj"
+    site_dir = build_dir / "site"
+    semantics_header = sln.build_dir / "linux" / "halo_msvc_semantics.h"
+    platform_semantics_header = sln.build_dir / "linux" / "platform_msvc_semantics.h"
+    prefix_header = LINUX_DIR / "include" / "halo_linux_prefix.h"
+    sdl_flag = f"--use-port={SDL_PORT}"
+
     n.comment("Web build (ninja web); see port/web/README.md")
-    n.variable("web_emcc", emcc)
+    n.variable("web_emcc", _quote(emcc))
     n.rule(
         name="web_cc",
         command=f"{compile_launcher(sln)}$web_emcc -MMD -MF $out.d $cflags -c $in -o $out",
@@ -230,120 +191,181 @@ def generate_web_build(n: Writer, sln: Any) -> None:
         depfile="$out.d",
         deps="gcc",
     )
+    # SDL's headers come with its port, which emcc fetches and builds the
+    # first time a unit asks for it: one unit does that first (pool console:
+    # its download shows), so that the others do not race for it
+    # (and its license, from its source, for licenses.txt)
+    sdl_stamp = build_dir / "sdl3.stamp"
+    sdl_license = build_dir / "SDL3-LICENSE.txt"
+    em_config = Path(emcc).with_name("em-config")
+    n.rule(
+        name="web_sdl3",
+        command=f"echo '#include <SDL3/SDL.h>' > $out.c && $web_emcc {sdl_flag} -pthread -c $out.c -o $out.o && "
+                f"rm -f $out.c $out.o && cp \"$$({_quote(em_config)} CACHE)/ports/halo_sdl3/SDL-{SDL_TAG}/LICENSE.txt\" "
+                f"{sdl_license} && touch $out",
+        description="WEB SDL3 (Emscripten port, fetched and built once)",
+        pool="console",
+    )
+    n.build(outputs=sdl_stamp, implicit_outputs=[sdl_license], rule="web_sdl3", implicit=[SDL_PORT])
 
-    abi = " ".join(WEB_ABI_FLAGS + (["-DHALO_RELEASE"] if release else []) + ["-g2"])
-    code = " ".join(GAME_CODE_FLAGS)
-    implicit_headers = [*xdk_headers(), semantics_header, platform_semantics_header, prefix_header]
-
+    abi = " ".join(WEB_ABI_FLAGS + configuration_defines(sln))
+    code = " ".join(WEB_CODE_FLAGS)
+    implicit_headers = [*xdk_headers(), prefix_header, semantics_header, platform_semantics_header, sdl_stamp]
     objects: List[Path] = []
 
     def add_object(source: Path, cflags: str) -> None:
-        obj = obj_dir / Path(str(source).lstrip("/")).with_suffix(".o")
-        if str(source).startswith(str(BUILD)):
-            obj = obj_dir / source.relative_to(BUILD).with_suffix(".o")
-        n.build(outputs=obj, rule="web_cc", inputs=source, implicit=implicit_headers,
-                variables={"cflags": cflags})
+        relative = source.relative_to(build_dir) if str(source).startswith(str(build_dir)) else source
+        obj = obj_dir / relative.with_suffix(".o")
+        n.build(outputs=obj, rule="web_cc", inputs=source, implicit=implicit_headers, variables={"cflags": cflags})
         objects.append(obj)
 
-    # the game
+    # ---------- the game
+
     game_cflags = " ".join([
         abi, code, " ".join(GAME_FLAGS),
         f"-include {prefix_header}", f"-include {semantics_header}",
-        f"-I{PORT_DIR}/include", f"-I{LINUX_DIR}/include",
-        # the headers of the port's own game units (port/linux/game), for the
-        # game sources that call them
+        f"-I{LINUX_DIR}/include",
+        # the headers of the port's own game units (port/linux/game)
         f"-iquote {Path(config['game_sources'])}",
         game_defines_and_includes(config), f"-idirafter {XDK_INCLUDE}",
     ])
     for source in game_sources(config):
         name = source.as_posix()
         cflags = game_cflags
+        if name == "source/main/main.c":
+            cflags += " " + updater_defines(release)
         if name in VARIADIC_PROTOTYPE_FILES:
             cflags += f" -include {ANDROID_DIR}/include/halo_android_variadic_prototypes.h"
         if name in PROTOTYPE_FILES:
             cflags += f" -include {PROTOTYPE_FILES[name]}"
         if name == "source/shell/shell_xbox.c":
+            # the game starts once the browser's storage is mounted
+            # (port/web/src/web_main.c)
             cflags += " -Dmain=halo_game_main"
         add_object(source, cflags)
     for source in sorted(Path(config["game_sources"]).glob("*.c")):
         add_object(source, game_cflags)
 
-    # the platform layer shared with Linux, and the web runtime
+    # ---------- the platform layer and the web runtime
+
+    platform_dir = Path(config["platform_sources"])
     platform_cflags = " ".join([
-        abi, code, "-std=gnu11", "-D_GNU_SOURCE", "-DHALO_LINUX_PLATFORM_LAYER", "-w",
+        abi, code, sdl_flag, "-std=gnu11", "-D_GNU_SOURCE", "-DHALO_LINUX_PLATFORM_LAYER", "-w",
         f"-include {prefix_header}", f"-include {platform_semantics_header}",
-        f"-I{PORT_DIR}/include", f"-I{PORT_DIR}/src", f"-I{LINUX_DIR}/src", f"-I{LINUX_DIR}/include",
-        f"-I{TOML_DIR}", f"-I{EXPAT_DIR}", f"-I{KCP_DIR}", "-Iport/third_party/monocypher", f"-I{ZLIB_DIR}",
-        "-Isource -Isource/cseries",
-        f"-I{SDL_DIR}/include", f"-idirafter {XDK_INCLUDE}",
+        f"-I{platform_dir}", f"-I{LINUX_DIR}/include", f"-I{PORT_DIR}/src", f"-I{ANDROID_DIR}/host",
+        f"-I{TOML_DIR}", f"-I{EXPAT_DIR}", f"-I{KCP_DIR}", f"-I{MONOCYPHER_DIR}", f"-I{ZLIB_DIR}",
+        "-Isource -Isource/cseries", f"-idirafter {XDK_INCLUDE}",
     ])
     # posix_*.c talk to the C library only, with its own ABI (as on Linux)
     posix_cflags = " ".join([
-        "-pthread", "-DHALO_ANDROID=1", "-DHALO_ARM64_GUEST=1", "-DHALO_GLES=1", "-DHALO_WEB=1",
-        "-Xclang", "-target-abi", "-Xclang", "experimental-mv",
-        "-mmultivalue", "-mbulk-memory", "-mnontrapping-fptoint", "-msimd128", "-O2", "-g2", "-flto",
-        "-std=gnu11", "-D_GNU_SOURCE", "-D_FILE_OFFSET_BITS=64", "-w", f"-I{LINUX_DIR}/src",
+        abi, "-std=gnu11", "-D_GNU_SOURCE", "-D_FILE_OFFSET_BITS=64", "-w", f"-I{platform_dir}",
     ])
-    for source in sorted((LINUX_DIR / "src").glob("*.c")):
-        if source.name in PLATFORM_EXCLUDE:
+    for source in sorted(platform_dir.glob("*.c")):
+        if source.name in WEB_EXCLUDE:
             continue
         add_object(source, posix_cflags if source.name.startswith("posix_") else platform_cflags)
-    for source in hud_assets_build(n, "web", BUILD / "gen" / "hud_hires_assets.c"):
+    for source in hud_assets_build(n, "web", build_dir / "generated" / "hud_hires_assets.c"):
         add_object(source, platform_cflags)
     for source in sorted((PORT_DIR / "src").glob("*.c")):
-        add_object(source, posix_cflags if source.name in ("web_stubs.c", "web_net.c") else platform_cflags)
+        add_object(source, posix_cflags if source.name in WEB_POSIX_SOURCES else platform_cflags)
+    add_object(WATCH_HASH, " ".join([abi, "-std=gnu11", "-w"]))
+
+    # ---------- third-party libraries, as the other builds have them
+
     add_object(TOML_DIR / "tomlc17.c", " ".join([abi, "-std=gnu11", "-w"]))
-    add_object(KCP_DIR / "ikcp.c", " ".join([abi, "-std=gnu11", "-w"]))
     for name in EXPAT_SOURCES:
-        add_object(EXPAT_DIR / name, platform_cflags)
-    for name in ("monocypher.c", "monocypher-ed25519.c"):
-        add_object(Path("port/third_party/monocypher") / name, " ".join([abi, "-std=gnu11", "-w"]))
-    # voice chat's codec (port/third_party/opus)
+        add_object(EXPAT_DIR / name, " ".join([abi, "-std=gnu11", f"-I{EXPAT_DIR}", "-w"]))
+    add_object(KCP_DIR / "ikcp.c", " ".join([abi, "-std=gnu11", "-w"]))
     for source in opus_sources():
         add_object(source, opus_cflags(abi))
-    # the port's zlib (maps, the menus' and the HUD's PNGs)
+    for name in ("monocypher.c", "monocypher-ed25519.c"):
+        add_object(MONOCYPHER_DIR / name, " ".join([abi, "-std=gnu11", "-w"]))
     for name in ZLIB_SOURCES:
-        add_object(ZLIB_DIR / name, " ".join([abi, "-std=gnu11", "-w", *ZLIB_DEFINES]))
-    musl_math_cflags = " ".join([
-        abi, "-std=gnu11", "-w", f"-I{MUSL_MATH_DIR}/include", f"-include {MUSL_MATH_DIR}/include/libm.h",
-    ])
+        add_object(ZLIB_DIR / name, " ".join([abi, "-std=gnu11", *ZLIB_DEFINES, "-w"]))
     for source in musl_math_sources():
-        add_object(source, musl_math_cflags)
+        add_object(source, musl_math_cflags(abi))
 
     # ---------- the link
 
     library_js = PORT_DIR / "src" / "web_library.js"
     pre_js = PORT_DIR / "src" / "web_pre.js"
-    stream_batch_js = PORT_DIR / "stream-batch.js"
     halo_js = site_dir / "halo.js"
     halo_wasm = site_dir / "halo.wasm"
-    link_flags = " ".join(LINK_FLAGS + [f"--js-library {library_js}", f"--pre-js {stream_batch_js}", f"--pre-js {pre_js}"])
+    link_flags = [
+        "-O2", "-g2", "-pthread", sdl_flag,
+        # a call that does not match its callee's type is an error, not a
+        # trap when it runs
+        "-Wl,--fatal-warnings",
+        # the game's main on a thread of its own, where it may block; the
+        # page's thread only passes events
+        "-sPROXY_TO_PTHREAD=1",
+        # (the game's threads, SDL's, the file system's: about ten at once)
+        "-sPTHREAD_POOL_SIZE=16",
+        "-sOFFSCREENCANVAS_SUPPORT=1",
+        "-sOFFSCREENCANVASES_TO_PTHREAD=#canvas",
+        "-sMIN_WEBGL_VERSION=2",
+        "-sMAX_WEBGL_VERSION=2",
+        "-sGL_ENABLE_GET_PROC_ADDRESS=1",
+        "-sWASMFS=1",
+        "-lopfs.js",
+        f"-sINITIAL_MEMORY={WEB_MEMORY_BYTES}",
+        "-sALLOW_MEMORY_GROWTH=0",
+        # (the game recurses deeply in places: scripts, the BSP's walks)
+        "-sSTACK_SIZE=8MB",
+        "-sDEFAULT_PTHREAD_STACK_SIZE=2MB",
+        "-sEXIT_RUNTIME=0",
+        "-sENVIRONMENT=web,worker",
+        "-sERROR_ON_UNDEFINED_SYMBOLS=1",
+        # the page gives the game its arguments and reads its output
+        "-sMODULARIZE=1",
+        "-sEXPORT_NAME=createHalo",
+        # (the memory, which the page reads web_state's words from, and what
+        # the page hands the room's frames to the game with: net.js)
+        "-sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAPU32",
+        "-sEXPORTED_FUNCTIONS=_main,_malloc,_free",
+        f"-sASSERTIONS={0 if release else 1}",
+        # function names in stack traces (the name section only)
+        "--profiling-funcs",
+        f"--js-library {library_js}",
+        f"--pre-js {pre_js}",
+    ]
     n.rule(
         name="web_link",
-        command=f"$web_emcc $ldflags -o $out @$out.rsp",
+        command="$web_emcc $ldflags -o $out @$out.rsp",
         description="WEB LINK $out",
         rspfile="$out.rsp",
         rspfile_content="$in_newline",
     )
     n.build(outputs=halo_js, implicit_outputs=[halo_wasm], rule="web_link", inputs=objects,
-            implicit=[library_js, stream_batch_js, pre_js], variables={"ldflags": link_flags})
+            implicit=[library_js, pre_js, SDL_PORT, sdl_stamp], variables={"ldflags": " ".join(link_flags)})
 
-    # ---------- the site: the page, the service worker and the app manifest
+    # ---------- the site: the page, its service worker and the importer
 
-    site_files: List[Path] = []
     n.rule(name="web_copy", command="cp $in $out", description="WEB STAGE $out")
-    for source in sorted((PORT_DIR / "site").rglob("*")):
-        if source.is_file():
-            target = site_dir / source.relative_to(PORT_DIR / "site")
-            n.build(outputs=target, rule="web_copy", inputs=source)
-            site_files.append(target)
+    site_files: List[Path] = []
+    for source in site_sources():
+        target = site_dir / source.relative_to(PORT_DIR / "site")
+        n.build(outputs=target, rule="web_copy", inputs=source)
+        site_files.append(target)
+    for name in SITE_FONTS:
+        target = site_dir / "fonts" / name
+        n.build(outputs=target, rule="web_copy", inputs=Path("port/assets/fonts") / name)
+        site_files.append(target)
+    licenses = site_dir / "licenses.txt"
+    n.rule(
+        name="web_licenses",
+        command=f"$python {PORT_DIR}/licenses.py $out {sdl_license}",
+        description="WEB LICENSES $out",
+    )
+    n.build(outputs=licenses, rule="web_licenses", implicit=[PORT_DIR / "licenses.py", sdl_license])
+    site_files.append(licenses)
     n.rule(
         name="web_version",
-        command=f"$python {PORT_DIR}/stamp_version.py $out $in",
+        command=f"$python {PORT_DIR}/stamp_version.py --flavor {'release' if release else 'debug'} $out $in",
         description="WEB VERSION $out",
     )
     version_file = site_dir / "version.json"
     n.build(outputs=version_file, rule="web_version", inputs=[halo_js, halo_wasm, *site_files],
-            implicit=[PORT_DIR / "stamp_version.py"])
+            implicit=[PORT_DIR / "stamp_version.py", Path("port/linux/include/halo_port_limits.h")])
     n.build(outputs="web", rule="phony", inputs=[halo_js, halo_wasm, version_file, *site_files])
     n.newline()

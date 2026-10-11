@@ -19,10 +19,6 @@ header included in hcex build.
 wchar_t const *network_game_get_random_player_name(
 	void);
 
-#if defined(HALO_WEB) || defined(HALO_IOS_BROWSER)
-boolean network_game_player_name_is_blank(wchar_t const *name);
-#endif
-
 /* ---------- globals */
 
 /* ---------- public code */

@@ -34,7 +34,6 @@ struct _projectile_datum
 	real detonation_timer;
 	real detonation_timer_delta;
 	real arming_time;
-	/* The complete runtime tail (projectiles.c keeps the same layout). */
 	real arming_time_delta;
 	real odometer;
 	real deceleration_timer;
@@ -125,6 +124,7 @@ boolean projectile_aim_ballistic(
 void projectile_accelerate(
 	long projectile_index,
 	union real_vector3d const *acceleration);
+/* port: prototype, so the ARM64 build calls it with the definition's signature */
 boolean projectile_update(long projectile_index);
 
 /* ---------- globals */

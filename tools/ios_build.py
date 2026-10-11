@@ -85,6 +85,7 @@ def main():
         ('port/third_party/opus/COPYING', 'Opus.txt'),
         ('port/third_party/zlib/LICENSE', 'zlib.txt'),
         ('port/assets/icons/lucide/LICENSE', 'Lucide.txt'),
+        ('port/third_party/mbedtls/LICENSE', 'Mbed-TLS.txt'),
     ):
         shutil.copyfile(ROOT/source, notices/name)
     if args.guest_only:

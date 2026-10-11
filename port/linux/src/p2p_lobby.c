@@ -53,11 +53,7 @@ VERIFY_BUDGET milliseconds of it each pass of the p2p thread, from a queue
 of MAXIMUM_QUEUED; the rest is dropped (hosts publish again).
 */
 
-#ifdef HALO_RELAY
-#include "relay_platform.h"
-#else
 #include "platform.h"
-#endif
 #include "posix.h"
 #include "port_config.h"
 #include "p2p_internal.h"

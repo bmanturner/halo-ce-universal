@@ -297,7 +297,7 @@ def generate_ios_guest_build(n: Writer, sln: Any) -> None:
     # reach instead
     branch_ranges = ["-mllvm", "-aarch64-tbz-offset-bits=12", "-mllvm", "-aarch64-cbz-offset-bits=17",
                      "-mllvm", "-aarch64-bcc-offset-bits=17"]
-    guest_abi = " ".join(GUEST_ABI_FLAGS + ["-DHALO_IOS=1", "-DHALO_IOS_BROWSER=1", "-DHALO_LINUX=1", "-ffixed-x15", "-ffixed-x27", "-mllvm", "-aarch64-enable-compress-jump-tables=false"] + branch_ranges + (["-DHALO_RELEASE"] if getattr(sln, "port_release", False) else []))
+    guest_abi = " ".join(GUEST_ABI_FLAGS + ["-DHALO_IOS=1", "-DHALO_LINUX=1", "-ffixed-x15", "-ffixed-x27", "-mllvm", "-aarch64-enable-compress-jump-tables=false"] + branch_ranges + (["-DHALO_RELEASE"] if getattr(sln, "port_release", False) else []))
     guest_code = " ".join(GUEST_CODE_FLAGS)
     tool_implicit = [Path(converter), Path("tools/guest_asm_convert.py"), *generated_headers]
     # profile-guided optimisation with the Linux build's profile (committed,
@@ -387,7 +387,6 @@ def generate_ios_guest_build(n: Writer, sln: Any) -> None:
         f"-I{MUSL_MATH_DIR}/include", f"-include {MUSL_MATH_DIR}/include/libm.h"])
     for source in musl_math_sources():
         objects.append(guest_object(source, math_cflags))
-    objects.append(guest_object(Path("port/ios/network/guest_room.c"), platform_cflags))
     # the settings file's parser (port/third_party/tomlc17)
     objects.append(guest_object(TOML_DIR / "tomlc17.c", platform_cflags))
     for name in EXPAT_SOURCES:

@@ -2310,31 +2310,11 @@ static boolean player_profile_color_picker_menu_dispose(
 	return TRUE;
 }
 
-#ifdef HALO_IOS_BROWSER
-void ios_browser_test_open(void) {
-    void ios_room_open(void);
-    dispose_global_network_game_client();dispose_global_network_game_server();
-    main_goto_main_menu();ios_room_open();
-}
-#endif
-
 static boolean network_game_server_list_initialize(
 	struct widget_instance *widget,
 	struct event_record *event,
 	boolean *widget_deleted)
 {
-#ifdef HALO_IOS_BROWSER
-    /* WebRTC rooms use their own transport; native Internet/LAN use the game menus. */
-    int host_ios_browser_mode(void);
-    char const *config_string(char const *name);
-    if (host_ios_browser_mode() || !strcmp(config_string("display.menus"), "xbox")) { void ios_room_open(void);
-      dispose_global_network_game_client();
-      dispose_global_network_game_server();
-      main_goto_main_menu();
-      ios_room_open();
-      return TRUE; }
-#endif
-
 	boolean result = TRUE;
 
 	dispose_global_network_game_client();

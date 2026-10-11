@@ -3816,7 +3816,7 @@ void sound_idle(
 }
 
 #ifdef HALO_IOS
-/* AppKit tracking can hold the event pump before sound initialization or
+/* port: AppKit tracking can hold the event pump before sound initialization or
    during loading. Only enter the streaming service when it is ready. */
 void sound_idle_for_native_menu(void)
 {

@@ -639,23 +639,6 @@ long *machine_get_player_list(
 	return machine_to_player_table[DATUM_INDEX_TO_ABSOLUTE_INDEX(machine_index)];
 }
 
-void network_player_remove_from_machine(
-	long machine_index,
-	long player_index)
-{
-	long *player_list;
-	short index;
-
-	if (machine_index < 0 || machine_index >= MAXIMUM_NETWORK_MACHINE_COUNT || player_index == NONE)
-		return;
-	player_list = machine_get_player_list(machine_index);
-	for (index = 0; index < MAXIMUM_LOCAL_PLAYERS; index++)
-	{
-		if (player_list[index] == player_index)
-			player_list[index] = NONE;
-	}
-}
-
 boolean local_player_exists(
 	long local_player_index)
 {
@@ -1284,6 +1267,8 @@ long player_new(
 			csmemcpy(&player->network_player_data, network_player, sizeof(struct network_player));
 	}
 
+	/* port: datum_new_at_index can fail when the player datum array is full;
+	NONE must not enter the machine's list */
 	if (player_index != NONE)
 		machine_add_player(machine_index, player_index);
 

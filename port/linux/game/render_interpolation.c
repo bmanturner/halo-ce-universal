@@ -2,7 +2,7 @@
 RENDER_INTERPOLATION.C
 
 Frames between the game's 30 Hz ticks, for the native ports (port/linux,
-port/ios, port/windows; see port/linux/README.md, "Frame rate").
+port/android, port/windows; see port/linux/README.md, "Frame rate").
 
 The game simulates in 30 Hz ticks and originally drew one frame per tick.
 The ports draw at the display's refresh rate instead, and every frame shows
