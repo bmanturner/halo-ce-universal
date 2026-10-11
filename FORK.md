@@ -31,8 +31,6 @@ Not in OpenCE:
   draws with ANGLE's Metal backend, plays with game controllers, keeps saves
   in iCloud, and switches the TV to SDR while it is in front so the TV can
   use its game mode.
-- **Server browser** in the Apple apps' own presentation of OpenCE's
-  peer-to-peer browser.
 - **Mouse sensitivity** from 1 to 100, finer at the low end.
 - **B.Jumper** button layout (Halo 3's Bumper Jumper) in Gamepad Setup.
 - **Touchpad scoreboard:** hold a DualSense or DualShock 4 touchpad to show
@@ -41,7 +39,6 @@ Not in OpenCE:
   place of Smooth Motion.
 - **Render height** setting in Video Settings: draw at fewer pixels and
   upscale. **MetalFX upscaling** without per-frame CPU stalls.
-- **Field of view** in Video Settings.
 - **Game Mode** on iPhone and iPad: iOS gives the game priority and polls
   Bluetooth controllers twice as often.
 - **Custom Edition maps on iPhone and iPad:** put them, with Halo PC's
@@ -52,5 +49,8 @@ Not in OpenCE:
   only on OpenGL ES 3.2 also runs on the iPad's ES 3.0.
 - **Profile-guided optimisation** for the iOS build.
 - Sockets are made again after iOS has had the app in the background.
+- Internet play is always on in the Apple apps, and they take browsers'
+  WebRTC as the other native builds do (OpenCE's `posix_dtls.c`, built with
+  Mbed TLS into the Apple hosts).
 
 None of these change what goes over the network, so public servers still work.

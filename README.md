@@ -13,6 +13,9 @@ Apple TV). The decompilation is of the Xbox build 2342
 The port starts from the decompilation of [bnunu/halo-1](https://github.com/bnunu/halo-1).
 That project is a fork of [punpckhdq/halo](https://github.com/punpckhdq/halo).
 
+This repository is the Apple fork of OpenCE. Its releases, and what it adds
+to OpenCE, are in [FORK.md](FORK.md).
+
 ## Download
 
 GitHub Actions builds the game for each commit. These links download the
@@ -29,17 +32,18 @@ Use the release build to play. The debug build stops at the first failed
 assertion and writes it to the log. Use the debug build to find and report
 problems.
 
-On each push to `main`, GitHub Actions also builds an unsigned IPA for iPhone
-and iPad and a simulator app. They are workflow artifacts, not releases.
-The Mac and Apple TV apps are not built there (the Apple TV app contains your
-own game data). Build them yourself: refer to "Build the game". Sign an IPA
-with your own Apple account before you install it: refer to
-[port/ios/RESIGNING.md](port/ios/RESIGNING.md).
+The iPhone and iPad app is an unsigned IPA (iOS 16 or later), on this
+repository's Releases: refer to [FORK.md](FORK.md#releases). Sign it with
+your own Apple account before you install it: refer to
+[port/ios/RESIGNING.md](port/ios/RESIGNING.md). There is no download of the
+Mac and Apple TV apps (the Apple TV app contains your own game data). Build
+them yourself: refer to "Build the game".
 
 The game updates itself. At start-up it looks for a newer release, and asks
 if you want to install it. Refer to "Updates" in
 [port/linux/README.md](port/linux/README.md#updates). The web site offers
-each new build when it is out.
+each new build when it is out. The Apple apps do not update themselves:
+install each new release.
 
 Each build of the `main` branch that passes on all four platforms is a new
 release, and the web site then plays it. The [Releases](https://github.com/OpenCommunityEdition/OpenCE/releases)
