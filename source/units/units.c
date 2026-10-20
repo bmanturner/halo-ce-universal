@@ -5102,20 +5102,18 @@ void unit_render_debug(
 		struct object_marker marker;
 		real mouth_aperture;
 
-		/*
-		 * BUG (original): January ignores the marker count and consumes the
-		 * output even when the requested head marker is absent. A safe,
-		 * intentionally nonmatching build should render only when this call
-		 * returns a value greater than zero.
-		 */
-		object_get_marker_by_name(unit_index, "head", &marker, 1);
-		mouth_aperture = unit->unit.mouth_aperture;
-		origin = marker.matrix.position;
-		render_debug_string_at_point(
-			FALSE,
-			&origin,
-			csprintf(temporary, "%.2f", mouth_aperture),
-			global_real_argb_orange);
+		/* port: the Xbox's bug fixed: it ignored the marker count and read
+		the marker of a unit with no head marker uninitialised */
+		if (object_get_marker_by_name(unit_index, "head", &marker, 1) > 0)
+		{
+			mouth_aperture = unit->unit.mouth_aperture;
+			origin = marker.matrix.position;
+			render_debug_string_at_point(
+				FALSE,
+				&origin,
+				csprintf(temporary, "%.2f", mouth_aperture),
+				global_real_argb_orange);
+		}
 	}
 
 	return;
@@ -8469,9 +8467,27 @@ boolean unit_add_weapon_to_inventory(
 				break;
 
 			case _unit_add_weapon_starting:
-				if (!TEST_FLAG(unit->unit.control_flags, _unit_control_weapon_primary_trigger_bit))
+				/* port: a second weapon, into the empty slot of a one-weapon
+				loadout, is the one in hand. While the trigger was down this
+				left the choice on the weapon already held, and the next
+				action put that choice back, so the new one stayed holstered. */
 				{
-					player_control_set_desired_weapon(unit_index, inventory_index);
+					boolean holding_another = FALSE;
+					short slot;
+
+					for (slot = 0; slot < MAXIMUM_WEAPONS_PER_UNIT; slot++)
+					{
+						if (slot != inventory_index &&
+							unit->unit.weapon_object_indices[slot] != NONE)
+						{
+							holding_another = TRUE;
+						}
+					}
+					if (holding_another ||
+						!TEST_FLAG(unit->unit.control_flags, _unit_control_weapon_primary_trigger_bit))
+					{
+						player_control_set_desired_weapon(unit_index, inventory_index);
+					}
 				}
 
 			case _unit_add_weapon_replace:

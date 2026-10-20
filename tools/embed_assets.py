@@ -25,7 +25,7 @@ no files beside its guest image.
 
 The data are 32-bit words, not bytes: the Android build passes the guest's
 assembly through tools/android_asm_convert.py, which rewrites identifiers in
-operands and would garble a long .ascii string of binary data.
+operands (it keeps .ascii strings as they are, but once garbled them).
 """
 
 import json
@@ -37,6 +37,8 @@ from typing import Any, List
 ROOT = Path(__file__).resolve().parent.parent
 HUD_ASSETS = Path("port/assets/hud")
 LAYOUT = HUD_ASSETS / "layout.json"
+# the HUD textures whose bitmaps Halo Custom Edition lays out alike
+CUSTOM_EDITION_HUD = HUD_ASSETS / "custom_edition.json"
 TITLE_ASSETS = Path("port/assets/titles")
 TITLE_LIST = TITLE_ASSETS / "titles.json"
 BUTTON_ASSETS = Path("port/assets/buttons")
@@ -88,7 +90,7 @@ def smaa_files() -> List[tuple]:
 
 def hud_asset_inputs() -> List[Path]:
     """The files the generated source is made from."""
-    inputs = [listing for listing in (LAYOUT, TITLE_LIST, BUTTON_LIST, FONT_LIST, MENU_LIST)
+    inputs = [listing for listing in (LAYOUT, CUSTOM_EDITION_HUD, TITLE_LIST, BUTTON_LIST, FONT_LIST, MENU_LIST)
               if (ROOT / listing).is_file()]
     return [*inputs, *(folder / f"{asset['name']}.png" for folder, asset, _ in textures()),
             *(FONT_ASSETS / name for name in font_files()), *(MENU_ASSETS / name for name in menu_files()),
@@ -156,6 +158,10 @@ def main() -> None:
         "",
     ]
     table = []
+    custom_edition = set()
+    if (ROOT / CUSTOM_EDITION_HUD).is_file():
+        custom_edition = {(entry["tag"], entry["bitmap"])
+                          for entry in json.loads((ROOT / CUSTOM_EDITION_HUD).read_text())["assets"]}
     for index, (folder, asset, title) in enumerate([] if menus_only else textures()):
         name = f"{asset['name']}.png"
         data = (ROOT / folder / name).read_bytes()
@@ -176,7 +182,8 @@ def main() -> None:
             sys.exit(f"{name}: sprite sequences must be 0 to 31 (hud_hires.h: sprites)")
         sprites = sum(1 << sequence for sequence in sequences)
         table.append(f'\t{{ "{tag}", {asset["bitmap"]}, {width}, {height}, 0x{asset["crc"]:08x}u, {coverage}, '
-                     f'{point_threshold}, {int(title)}, 0x{sprites:x}u, asset{index}, {len(data)} }},')
+                     f'{point_threshold}, {int(title)}, 0x{sprites:x}u, '
+                     f'{int((asset["tag"], asset["bitmap"]) in custom_edition)}, asset{index}, {len(data)} }},')
     lines.append("const struct hud_hires_embedded hud_hires_embedded[] =")
     lines.append("{")
     lines.extend(table)

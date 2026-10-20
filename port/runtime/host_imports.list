@@ -53,6 +53,7 @@ host_gl_wait_frame
 host_errno
 
 host_sdl_show_simple_message_box
+host_sdl_show_message_box
 host_ios_render_height
 host_ios_set_frame_rate
 host_ios_metalfx_present

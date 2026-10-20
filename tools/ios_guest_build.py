@@ -13,7 +13,7 @@ from typing import Any, Dict, List
 from .linux_build import MUSL_MATH_DIR, musl_math_sources, game_sources, game_defines_and_includes, LINUX_PROFILE, XDK_INCLUDE, compile_launcher, opus_cflags, opus_sources, pgo_mode, pgo_profile, profile_use_flags, xdk_headers
 from .ninja_syntax import Writer
 from .embed_assets import hud_assets_build
-from .linux_build import EXPAT_DIR, EXPAT_SOURCES, ZLIB_DEFINES, ZLIB_DIR, ZLIB_SOURCES
+from .linux_build import EXPAT_DIR, EXPAT_SOURCES, STB_VORBIS_SOURCE, ZLIB_DEFINES, ZLIB_DIR, ZLIB_SOURCES
 
 PORT_DIR = Path("port/runtime")
 LINUX_DIR = Path("port/linux")
@@ -362,6 +362,7 @@ def generate_ios_guest_build(n: Writer, sln: Any) -> None:
         objects.append(guest_object(source, cflags))
     for source in sorted(Path(config["game_sources"]).glob("*.c")):
         objects.append(guest_object(source, game_cflags))
+    objects.append(guest_object(STB_VORBIS_SOURCE, game_cflags))
 
     # the platform layer shared with Linux, and the guest runtime
     platform_cflags = " ".join([

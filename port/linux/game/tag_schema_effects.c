@@ -2685,8 +2685,9 @@ static boolean unicode_string_ends(
 }
 
 /* ends a string of length characters (it ends at the latest with its last)
-so that it is read to an end in it: whether it had to */
-static boolean unicode_string_end(
+so that it is read to an end in it: whether it had to (the mods' strings
+too: mod_strings.c) */
+boolean tag_schema_unicode_string_end(
 	wchar_t *string,
 	long length)
 {
@@ -2703,7 +2704,7 @@ static boolean unicode_string_end(
 }
 
 /* (a string is terminated, at its last whole character, as it is got:
-text_group.c; it is then read as its characters say: unicode_string_end) */
+text_group.c; it is then read as its characters say: tag_schema_unicode_string_end) */
 static boolean unicode_string_list_entry_check(
 	struct tag_validation *validation,
 	void *base)
@@ -2725,7 +2726,7 @@ static boolean unicode_string_list_entry_check(
 		tag_validate_correct(validation, "is not terminated: terminated");
 		string[length - 1] = 0;
 	}
-	if (unicode_string_end(string, length))
+	if (tag_schema_unicode_string_end(string, length))
 		tag_validate_correct(validation, "ends in a '|': ended before it");
 
 	return TRUE;
@@ -2962,8 +2963,14 @@ static boolean game_globals_interface_tag_references_check(
 /* the blocks whose first element is read through its address, or asked
 for and used unchecked: a player's look function (player_control.c,
 evaluate_piecewise_linear_function, from its address with its count),
-the rasterizer's data (rasterizer_common.c) and the interface's tags
-(interface.c, interface_tag_references_get) */
+the rasterizer's data (rasterizer_common.c), the interface's tags
+(interface.c, interface_tag_references_get), the camera (following_camera.c),
+the player's information (bipeds.c, units.c, players.c, player_control.c)
+and the first person interface (first_person_weapons.c, units.c): every map
+examined has each. (An element past a block's end reads as zeros,
+tag_empty_data: the falling damage and the multiplayer information, also
+read unchecked, are left to that, as the game's own maps leave them empty,
+ui.map the one and the campaign's the other) */
 static boolean game_globals_check(
 	struct tag_validation *validation,
 	void *base)
@@ -2979,6 +2986,11 @@ static boolean game_globals_check(
 	if (!globals->rasterizer_data.count || !globals->interface_tag_references.count)
 	{
 		tag_validate_refuse(validation, "has no rasterizer data or interface tags");
+		return FALSE;
+	}
+	if (!globals->camera.count || !globals->player_information.count || !globals->first_person_interface.count)
+	{
+		tag_validate_refuse(validation, "has no camera, player information or first person interface");
 		return FALSE;
 	}
 

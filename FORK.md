@@ -7,8 +7,8 @@ Apple port. Outside the Apple directories, it is OpenCE with the hooks that
 the Apple apps need.
 
 Up to date with OpenCE's `main` at
-[`e0b581b1`](https://github.com/OpenCommunityEdition/OpenCE/commit/e0b581b157999e90382668dbc5578528e85701cc)
-(2026-10-11), OpenCE's build 188.
+[`9662f0f6`](https://github.com/OpenCommunityEdition/OpenCE/commit/9662f0f6)
+(2026-10-20), after OpenCE's build 244.
 
 ## Releases
 
@@ -32,7 +32,6 @@ Not in OpenCE:
   in iCloud, and switches the TV to SDR while it is in front so the TV can
   use its game mode.
 - **Mouse sensitivity** from 1 to 100, finer at the low end.
-- **B.Jumper** button layout (Halo 3's Bumper Jumper) in Gamepad Setup.
 - **Touchpad scoreboard:** hold a DualSense or DualShock 4 touchpad to show
   the scoreboard.
 - **Frame rate** setting in Video Settings: 30 Classic, 60 or Display, in

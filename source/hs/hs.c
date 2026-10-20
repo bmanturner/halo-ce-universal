@@ -2829,6 +2829,7 @@ symbols in this file:
 #include "interface/hud_weapon.h"
 #include "interface/interface.h"
 #include "interface/player_ui.h"
+#include "saved games/player_profile.h" /* port: profile_reset_campaign */
 #include "rasterizer/rasterizer_cinematics.h"
 #include "shaders/shaders.h"
 #include "sound/game_sound.h"
@@ -2844,6 +2845,7 @@ symbols in this file:
 #ifdef HALO_PROFILE
 #include "profile_console.h" /* port: port/linux/game/profile_console.c */
 #endif
+#include "structure_culling.h" /* port: port/linux/game/structure_culling.c */
 
 /* ---------- constants */
 
@@ -3382,7 +3384,7 @@ typedef void (*hs_token_enumerator)(
 
 struct hs_function_table_storage
 {
-	struct hs_function_definition const *functions[418 + 4];
+	struct hs_function_definition const *functions[418 + 7];
 	struct profile_section profile;
 	hs_token_enumerator token_enumerators[18];
 };
@@ -3665,6 +3667,9 @@ enum
 	_hs_node_refusal_global,
 	_hs_node_refusal_arguments,
 	_hs_node_refusal_damaged,
+	/* port: a downloaded map's (hs_functions_denied_to_downloaded_maps) */
+	_hs_node_refusal_downloaded_function,
+	_hs_node_refusal_downloaded_global,
 };
 
 /* ---------- globals */
@@ -11702,42 +11707,92 @@ static struct hs_function_definition const sv_end_game_definition=
 	0,
 };
 
-/* port: the sounds of tag files played over the map's, for those making
-them (audio.loose_sounds: port/linux/game/loose_sounds.c), at the console */
-void loose_sounds_reload(void);
-void loose_sounds_enable(boolean enabled);
+/* port: the mods' tags played over the map's on this machine
+(the main menu's Mods: port/linux/game/mods.c), at the console */
+void mods_reload(void);
+void mods_enable(boolean enabled);
+void mods_list(void);
 
-HS_EVALUATE_NO_ARGUMENTS(hs_loose_sounds_reload_evaluate, loose_sounds_reload)
-HS_EVALUATE_VOID_BOOLEAN(hs_loose_sounds_evaluate, loose_sounds_enable)
+HS_EVALUATE_NO_ARGUMENTS(hs_mods_reload_evaluate, mods_reload)
+HS_EVALUATE_VOID_BOOLEAN(hs_mods_enable_evaluate, mods_enable)
+HS_EVALUATE_NO_ARGUMENTS(hs_mods_list_evaluate, mods_list)
 
-static struct hs_function_definition const loose_sounds_reload_definition=
+static struct hs_function_definition const mods_reload_definition=
 {
 	_hs_type_void,
 	0,
-	"loose_sounds_reload",
+	"mods_reload",
 	hs_macro_function_parse,
-	hs_loose_sounds_reload_evaluate,
-	"reads the sound tag files under the data root's tags folder again (all sounds stop if any changed).",
+	hs_mods_reload_evaluate,
+	"finds the mods again and reads their tag files again (all sounds stop if any changed).",
 	NULL,
 	0,
 };
 
-static struct hs_function_definition_with_1_parameter const loose_sounds_definition=
+static struct hs_function_definition_with_1_parameter const mods_enable_definition=
 {
 	{
 		_hs_type_void,
 		0,
-		"loose_sounds",
+		"mods_enable",
 		hs_macro_function_parse,
-		hs_loose_sounds_evaluate,
-		"plays the map's sounds from the tags folder's sound tag files, or (false) from the map, until the map changes.",
+		hs_mods_enable_evaluate,
+		"plays the mods' sounds, bitmaps, text and models, or (false) the map's own, until the map changes.",
 		NULL,
 		1,
 		{ _hs_type_boolean },
 	},
 };
 
-long const hs_function_table_count= 418 + 4;
+static struct hs_function_definition const mods_list_definition=
+{
+	_hs_type_void,
+	0,
+	"mods_list",
+	hs_macro_function_parse,
+	hs_mods_list_evaluate,
+	"lists the mods in the mods folder, and what they play on this map.",
+	NULL,
+	0,
+};
+
+/* port: the culling tests change only this machine's rendering */
+HS_EVALUATE_VOID_LONG(hs_structure_culling_evaluate, structure_culling_set_tests)
+
+static struct hs_function_definition_with_1_parameter const structure_culling_definition=
+{
+	{
+		_hs_type_void,
+		0,
+		"structure_culling",
+		hs_macro_function_parse,
+		hs_structure_culling_evaluate,
+		"which structure culling tests run, as bits (1 triangle planes, 2 bucket facing, 4 triangle facing, 8 finer buckets, 16 near first); 0 is the original walk.",
+		NULL,
+		1,
+		{ _hs_type_long_integer },
+	},
+};
+
+/* port: the debug view changes only this machine's rendering */
+HS_EVALUATE_VOID_BOOLEAN(hs_debug_structure_culling_evaluate, structure_culling_debug)
+
+static struct hs_function_definition_with_1_parameter const debug_structure_culling_definition=
+{
+	{
+		_hs_type_void,
+		0,
+		"debug_structure_culling",
+		hs_macro_function_parse,
+		hs_debug_structure_culling_evaluate,
+		"draws the structure triangles culled for the culling camera (red: outside the view, blue: facing away) and the counts.",
+		NULL,
+		1,
+		{ _hs_type_boolean },
+	},
+};
+
+long const hs_function_table_count= 418 + 7;
 
 struct hs_enum_definition const hs_enum_table[]=
 {
@@ -12171,8 +12226,11 @@ struct hs_function_table_storage hs_function_table=
 		&xbox_set_machine_name_definition.definition,
 		&sv_say_definition.definition,
 		&sv_end_game_definition,
-		&loose_sounds_reload_definition,
-		&loose_sounds_definition.definition,
+		&mods_reload_definition,
+		&mods_enable_definition.definition,
+		&mods_list_definition,
+		&structure_culling_definition.definition, /* port: local structure culling switch */
+		&debug_structure_culling_definition.definition, /* port: local culling debug view */
 	},
 	{
 		"hs_update",
@@ -12675,9 +12733,14 @@ static boolean const hs_function_allowed_in_maps[]=
 	TRUE, /* sv_say */
 	TRUE, /* sv_end_game: the host's */
 
-	/* the port's, for those making sounds */
-	FALSE, /* loose_sounds_reload */
-	FALSE, /* loose_sounds */
+	/* the port's, for this machine's mods */
+	FALSE, /* mods_reload */
+	FALSE, /* mods_enable */
+	FALSE, /* mods_list */
+
+	/* port: local structure rendering */
+	FALSE, /* structure_culling: this machine's rendering */
+	FALSE, /* debug_structure_culling: this machine's rendering */
 };
 typedef char verify_hs_function_allowed_in_maps_size[
 	NUMBEROF(hs_function_allowed_in_maps) == NUMBEROF(hs_function_table.functions) ? 1 : -1];
@@ -12871,6 +12934,51 @@ static boolean hs_syntax_node_linked_twice(
 	return twice;
 }
 
+/* port: what a downloaded map's scripts (map_share_map_downloaded: one map
+sharing downloaded, or game.downloaded_maps names) may not call or set, on top
+of what no map's may (hs_function_allowed_in_maps,
+hs_external_global_settable_by_maps): what changes the player's settings
+(their profile's), other players' games (ending a game for everyone, the
+HUD text every player sees), and the globals that outlive the map (they
+keep their values into the maps played after it, a host's other players'
+among them) */
+static char const *const hs_functions_denied_to_downloaded_maps[]=
+{
+	"player0_look_invert_pitch",
+	"sv_end_game",
+	"sv_say",
+	NULL
+};
+
+static char const *const hs_globals_denied_to_downloaded_maps[]=
+{
+	"cheat_deathless_player",
+	"rider_ejection",
+	"stun_enable",
+	"rasterizer_near_clip_distance",
+	"rasterizer_far_clip_distance",
+	"rasterizer_first_person_weapon_near_clip_distance",
+	"rasterizer_first_person_weapon_far_clip_distance",
+	NULL
+};
+
+/* port: whether the map whose scripts are checked is a downloaded one
+(hs_scenario_functions_check) */
+static boolean hs_scenario_downloaded = FALSE;
+
+static boolean hs_name_listed(
+	char const *name,
+	char const *const *list)
+{
+	for (; name && *list; list++)
+	{
+		if (!csstrcmp(name, *list))
+			return TRUE;
+	}
+
+	return FALSE;
+}
+
 /* port: why a map's script may not have the node (_hs_node_refusal_none if
 it may), and the function or global it names. A map may not have:
 - a link (to the next argument, or a call's first node) that isn't a node:
@@ -12918,6 +13026,9 @@ static short hs_syntax_node_refusal(
 	*name = function->name;
 	if (!hs_function_allowed_in_maps[function_index])
 		return _hs_node_refusal_function;
+	/* port: a downloaded map's (hs_functions_denied_to_downloaded_maps) */
+	if (hs_scenario_downloaded && hs_name_listed(function->name, hs_functions_denied_to_downloaded_maps))
+		return _hs_node_refusal_downloaded_function;
 
 	if (function->parse == hs_macro_function_parse)
 	{
@@ -12985,6 +13096,13 @@ static short hs_syntax_node_refusal(
 		{
 			*name = hs_global_external_get(designator & 0x7FFF)->name;
 			return _hs_node_refusal_global;
+		}
+		/* port: a downloaded map's (hs_globals_denied_to_downloaded_maps) */
+		if ((designator & 0x8000) && hs_scenario_downloaded &&
+			hs_name_listed(hs_global_external_get(designator & 0x7FFF)->name, hs_globals_denied_to_downloaded_maps))
+		{
+			*name = hs_global_external_get(designator & 0x7FFF)->name;
+			return _hs_node_refusal_downloaded_global;
 		}
 	}
 	else if (function_index == _hs_function_wake)
@@ -13095,6 +13213,11 @@ static void hs_scenario_functions_check(
 	short disabled_global_count = 0;
 	char reason[128];
 
+	/* port: a downloaded map's are held to tighter rules (map_share.c's
+	map_share_map_downloaded) */
+	hs_scenario_downloaded = map_share_map_downloaded(cache_file_loaded_map_name());
+	if (hs_scenario_downloaded)
+		error(_error_silent, "%s is a downloaded map: its scripts may call and set less", cache_file_loaded_map_name());
 	csmemset(hs_syntax_nodes_marked, 0, sizeof(hs_syntax_nodes_marked));
 	for (script_index = 0; script_index<scenario->hs_scripts.count; script_index++)
 	{
@@ -13201,6 +13324,13 @@ static void hs_scenario_functions_check(
 			break;
 		case _hs_node_refusal_global:
 			csprintf(reason, "sets %s, which a map's scripts may not", first_name);
+			break;
+		/* port: a downloaded map's */
+		case _hs_node_refusal_downloaded_function:
+			csprintf(reason, "calls %s, which a downloaded map's scripts may not", first_name);
+			break;
+		case _hs_node_refusal_downloaded_global:
+			csprintf(reason, "sets %s, which a downloaded map's scripts may not", first_name);
 			break;
 		case _hs_node_refusal_arguments:
 			csprintf(reason, "calls %s with arguments it doesn't take", first_name);
@@ -13485,10 +13615,13 @@ static boolean hs_rebuild_source(
 	struct file_reference source_files[8];
 	short source_file_count;
 	short source_file_index;
+	char *scripts_name;
 
 	tag_block_resize(&global_scenario_get()->hs_source_files, 0);
-	sprintf(scenario_path, "data\\%s", tag_get_name(global_scenario_index));
-	sprintf(strrchr(scenario_path, '\\') + 1, "scripts");
+	/* port: snprintf (a map's tag's name may be any length) */
+	snprintf(scenario_path, sizeof(scenario_path), "data\\%s", tag_get_name(global_scenario_index));
+	scripts_name = strrchr(scenario_path, '\\') + 1;
+	snprintf(scripts_name, sizeof(scenario_path) - (scripts_name - scenario_path), "scripts");
 	file_reference_create_from_path(
 		&global_scripts,
 		"data\\global_scripts.hsc",
@@ -13549,11 +13682,20 @@ void hs_node_gc(
 	return;
 }
 
+/* port: some multiplayer maps keep a copy of the place for each game type,
+with its own sky. The script's first switch_bsp is the copy for the type the
+host started. A later switch to another copy reloads the level every couple
+of seconds, so that request is ignored. Cleared for each map. */
+static short scripted_multiplayer_bsp = NONE;
+static boolean scripted_multiplayer_bsp_reported = FALSE;
+
 void hs_initialize_for_new_map(
 	void)
 {
 	struct scenario *scenario;
 
+	scripted_multiplayer_bsp = NONE;
+	scripted_multiplayer_bsp_reported = FALSE;
 	scenario = global_scenario_index != NONE ? global_scenario_get() : NULL;
 	hs_allocate();
 	if (scenario && scenario->hs_syntax_data.size)
@@ -14957,7 +15099,41 @@ HS_EVALUATE_VOID_FROM_ARGUMENTS(debug_player_teleport_evaluate, struct hs_argume
 HS_EVALUATE_VOID_STRING(main_set_map_name_evaluate, main_set_map_name)
 HS_EVALUATE_VOID_STRING(main_set_multiplayer_map_name_evaluate, main_set_multiplayer_map_name)
 HS_EVALUATE_VOID_UNSIGNED_SHORT(main_set_difficulty_evaluate, main_set_difficulty)
-HS_EVALUATE_VOID_FROM_ARGUMENTS(scenario_switch_structure_bsp_evaluate, struct hs_arguments_word, (scenario_switch_structure_bsp(arguments->value)))
+/* port: a campaign script still switches, and so does a player walking
+through a BSP trigger (main_switch_structure_bsp, not this). */
+static void scenario_switch_structure_bsp_evaluate(
+	short function_index,
+	long thread_index,
+	boolean initialize)
+{
+	struct hs_arguments_word const *arguments;
+	short structure_bsp_index;
+
+	arguments = (struct hs_arguments_word const *)hs_macro_function_evaluate(function_index, thread_index, initialize);
+	if (arguments)
+	{
+		structure_bsp_index = (short)arguments->value;
+		if (!game_engine_running() || global_structure_bsp_index_get() == NONE)
+		{
+			scripted_multiplayer_bsp = NONE;
+			scripted_multiplayer_bsp_reported = FALSE;
+			scenario_switch_structure_bsp(structure_bsp_index);
+		}
+		else if (scripted_multiplayer_bsp == NONE ||
+			scripted_multiplayer_bsp == structure_bsp_index)
+		{
+			scripted_multiplayer_bsp = structure_bsp_index;
+			scenario_switch_structure_bsp(structure_bsp_index);
+		}
+		else if (!scripted_multiplayer_bsp_reported)
+		{
+			scripted_multiplayer_bsp_reported = TRUE;
+			error(_error_silent, "switch_bsp from a script is ignored after the multiplayer game has chosen its bsp");
+		}
+		hs_return(thread_index, 0);
+	}
+	return;
+}
 HS_EVALUATE_VOID_STRING(main_crash_evaluate, main_crash)
 HS_EVALUATE_VOID_STRING(debug_dump_memory_for_file_evaluate, debug_dump_memory_for_file)
 HS_EVALUATE_VOID_STRING(profile_dump_to_file_evaluate, profile_dump_to_file)
@@ -15258,6 +15434,10 @@ static boolean hs_expression_changes_no_game(
 		"player0_look_yaw_rate", "player1_look_yaw_rate", "player2_look_yaw_rate", "player3_look_yaw_rate",
 		"player0_look_pitch_rate", "player1_look_pitch_rate", "player2_look_pitch_rate",
 		"player3_look_pitch_rate",
+		/* (a machine's mods are its own: mods.c) */
+		"mods_reload", "mods_enable", "mods_list",
+		"structure_culling", /* port: only this machine's rendering */
+		"debug_structure_culling", /* port: only this machine's rendering */
 		"true", "false", "on", "off",
 	};
 	char const *character = expression;
@@ -15390,6 +15570,40 @@ static boolean hs_compile_and_evaluate_command(
 				length--;
 			name[length] = 0;
 			return network_votekick_player_named(name);
+		}
+	}
+	/* port: profile_reset_campaign, which clears the first player's
+	profile's campaign progress (player_ui_reset_campaign_progress) once
+	confirmed: "profile_reset_campaign yes" */
+	{
+		char const *text = hs_host_player_command(expression, "profile_reset_campaign");
+
+		if (text)
+		{
+			wchar_t wide_name[MAXIMUM_PLAYER_PROFILE_NAME_LENGTH];
+			char name[MAXIMUM_PLAYER_PROFILE_NAME_LENGTH];
+			boolean confirmed;
+			long length;
+
+			while (*text == ' ' || *text == '\t' || *text == '"')
+				text++;
+			confirmed = csstrncmp(text, "yes", 3) == 0 &&
+				(!text[3] || text[3] == ' ' || text[3] == '\t' || text[3] == '"' || text[3] == ')');
+			if (!player_ui_reset_campaign_progress(confirmed, wide_name, NUMBEROF(wide_name)))
+			{
+				console_warning("there is no profile to reset: make or choose one first");
+				return FALSE;
+			}
+			for (length = 0; wide_name[length]; length++)
+				name[length] = wide_name[length] < 0x80 ? (char)wide_name[length] : '?';
+			name[length] = 0;
+			if (!confirmed)
+				console_printf(FALSE,
+					"This clears every level %s finished and starts the campaign over at The Pillar of Autumn. "
+					"To do it, type: profile_reset_campaign yes", name);
+			else
+				console_printf(FALSE, "%s's campaign progress is reset: The Pillar of Autumn is the only level open", name);
+			return TRUE;
 		}
 	}
 	/* port: playing in another's game, the host decides the game: no

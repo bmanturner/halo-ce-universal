@@ -213,7 +213,7 @@ The first hardware controller shares player one with the on-screen controls.
 Player one's controller stays selected while connected, even if another
 controller is attached.
 
-Settings > Gamepads > BUTTON LAYOUT includes B.JUMPER. Click and hold a
+Settings > Gamepads > BUTTON LAYOUT includes BUMPER JUMPER. Click and hold a
 DualSense or DualShock 4 touchpad to show the scoreboard; the controller's
 Back, Create or Share button also shows it, as in the original game.
 

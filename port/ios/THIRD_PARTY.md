@@ -3,7 +3,8 @@
 This iOS port builds on [cybersecurity/halo-ce-universal](https://github.com/cybersecurity/halo-ce-universal),
 the native ports in [bnunu/halo-1](https://github.com/bnunu/halo-1), and the
 decompilation work in [punpckhdq/halo](https://github.com/punpckhdq/halo).
-The inherited project license is [CC0 1.0](../../LICENSE.md).
+The project license is the [AGPL 3.0 or later](../../LICENSE); OpenCE's
+commits before its move to the AGPL stay under [CC0 1.0](../../LICENSES/CC0-1.0.txt).
 
 The app includes SDL 3.4.16 (zlib license), portions of musl 1.2.5 (see its
 COPYRIGHT for the MIT license and component notices), KCP (MIT), and tomlc17

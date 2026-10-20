@@ -30,8 +30,10 @@ where its offset falls in their combined offset space.
 #include "cache_file_formats.h"
 #include "custom_edition_cache.h"
 #include "tag_schema.h"
+#include "map_share.h"
 
 #include <stdlib.h>
+#include <xtl.h>
 
 /* ---------- constants */
 
@@ -71,6 +73,9 @@ struct custom_edition_file
 struct custom_edition_cache_globals
 {
 	boolean tags_loaded;
+	/* the loaded map's file (custom_edition_cache_loaded_path), while it
+	is open */
+	char map_path[MAP_PATH_SIZE];
 	/* the Halo PC behaviours the loaded map relies on (enum
 	custom_edition_behaviour, flags) */
 	uint32_t behaviours;
@@ -204,13 +209,63 @@ static boolean maps_folder_has(
 	return file_path_exists(path);
 }
 
-/* the file that holds the map `map_name` names (a level name or a file
-name): <custom maps folder>\<name>.map */
-static boolean custom_edition_map_path(
+/* The custom_maps folder's one map named <name>_<hash>.map, for a name
+without the hash its file has: its file name (without the extension) in
+`hashed` (MAP_PATH_SIZE characters). A download beside another version of
+its name is named so (map_share.c), and a build of before named every map so
+(map_share_map_found gives the names back); FALSE if there are more. */
+static boolean maps_folder_hashed_name(
+	char const *name,
+	char *hashed)
+{
+	char pattern[MAP_PATH_SIZE];
+	WIN32_FIND_DATAA data;
+	HANDLE find;
+	short count = 0;
+
+	if (map_share_name_hashed(name) ||
+		strlen(CUSTOM_EDITION_MAP_DIRECTORY) + strlen(name) + 1 + MAP_SHARE_NAME_DIGITS + 4 >= MAP_PATH_SIZE)
+	{
+		return FALSE;
+	}
+	sprintf(pattern, "%s%s_*%s", CUSTOM_EDITION_MAP_DIRECTORY, name, MAP_FILE_EXTENSION);
+	find = FindFirstFileA(pattern, &data);
+	if (find == INVALID_HANDLE_VALUE)
+		return FALSE;
+	do
+	{
+		char found[sizeof(data.cFileName) + 1];
+		size_t length;
+
+		memcpy(found, data.cFileName, sizeof(data.cFileName));
+		found[sizeof(data.cFileName)] = 0;
+		length = strlen(found);
+		if ((data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || length <= strlen(MAP_FILE_EXTENSION))
+			continue;
+		found[length - strlen(MAP_FILE_EXTENSION)] = 0;
+		/* (the name and a hash: not a longer name that starts the same) */
+		if (!map_share_name_hashed(found) || (size_t)map_share_name_base_length(found) != strlen(name) ||
+			_strnicmp(found, name, strlen(name)))
+		{
+			continue;
+		}
+		if (count++)
+			break;
+		strcpy(hashed, found);
+	} while (FindNextFileA(find, &data));
+	CloseHandle(find);
+
+	return count == 1;
+}
+
+/* the file the map `map_name` names (a level name or a file name),
+whatever version a network game is on (custom_edition_map_file_named) */
+static boolean custom_edition_map_named(
 	char const *map_name,
 	char *path)
 {
 	char const *name = tag_name_strip_path(map_name);
+	char hashed[MAP_PATH_SIZE];
 	short folder;
 
 	for (folder = 0; folder < NUMBER_OF_MAPS_FOLDERS; folder++)
@@ -220,8 +275,83 @@ static boolean custom_edition_map_path(
 			return TRUE;
 		}
 	}
+	if (maps_folder_hashed_name(name, hashed) && maps_folder_has(maps_folder(0), hashed, MAP_FILE_EXTENSION, path))
+	{
+		return TRUE;
+	}
+	/* (a level name of a build of before, the map named for its hash: the
+	map given its name back, if the hash is still its) */
+	if (map_share_name_hashed(name) && strlen(name) < MAP_PATH_SIZE)
+	{
+		char base[MAP_PATH_SIZE];
+		char digits[MAP_SHARE_NAME_DIGITS + 1];
+		byte hash[MAP_SHARE_HASH_BYTES];
+		short length = map_share_name_base_length(name);
+
+		memcpy(base, name, (size_t)length);
+		base[length] = 0;
+		if (maps_folder_has(maps_folder(0), base, MAP_FILE_EXTENSION, path) && map_share_map_hash(path, hash))
+		{
+			map_share_hash_digits(hash, digits);
+			if (!strcmp(name + length + 1, digits))
+				return TRUE;
+		}
+	}
 
 	return FALSE;
+}
+
+/* the file of a network game's map of its version, as last looked for: the
+game asks for the map's file many times a frame, so it is looked for again
+a second later, or once the maps have changed (custom_edition_map_paths_forget) */
+static struct
+{
+	char name[MAP_PATH_SIZE];
+	unsigned long version;
+	boolean found;
+	char path[MAP_PATH_SIZE];
+	unsigned long looked_at;
+} custom_edition_version_lookup;
+
+void custom_edition_map_paths_forget(
+	void)
+{
+	custom_edition_version_lookup.looked_at = 0;
+}
+
+/* the file that holds the map `map_name` names (a level name or a file
+name): in a network game on that map, the file of its version, and none
+if this machine has none (a download's, or another version's, is not
+loaded in its place); else custom_edition_map_named's */
+static boolean custom_edition_map_path(
+	char const *map_name,
+	char *path)
+{
+	unsigned long version;
+
+	if (map_share_game_map_version(map_name, &version) && version)
+	{
+		char const *name = tag_name_strip_path(map_name);
+		unsigned long now = GetTickCount() | 1;
+
+		if (custom_edition_version_lookup.looked_at && now - custom_edition_version_lookup.looked_at < 1000 &&
+			custom_edition_version_lookup.version == version && !csstrcasecmp(custom_edition_version_lookup.name, name))
+		{
+			if (custom_edition_version_lookup.found)
+				strcpy(path, custom_edition_version_lookup.path);
+			return custom_edition_version_lookup.found;
+		}
+		if (strlen(name) >= MAP_PATH_SIZE)
+			return FALSE;
+		custom_edition_version_lookup.found = custom_edition_map_find_version(map_name, version, path);
+		strcpy(custom_edition_version_lookup.name, name);
+		strcpy(custom_edition_version_lookup.path, custom_edition_version_lookup.found ? path : "");
+		custom_edition_version_lookup.version = version;
+		custom_edition_version_lookup.looked_at = now;
+		return custom_edition_version_lookup.found;
+	}
+
+	return custom_edition_map_named(map_name, path);
 }
 
 /* A cache's resource map of `type`, bitmaps.map and so on, in the first maps
@@ -245,6 +375,153 @@ static boolean custom_edition_resource_map_path(
 	return TRUE;
 }
 
+/* the locale resource map custom_edition_locale_open opened */
+static struct
+{
+	boolean open;
+	struct custom_edition_file file;
+	struct resource_map map;
+} custom_edition_locale;
+
+/* a unicode string list tag: its strings' block (count, address and
+definition), each element a tag_data of the string's UTF-16 characters
+(size, then the address 12 bytes in) */
+#define STRING_LIST_HEADER_BYTES 12
+#define STRING_LIST_ELEMENT_BYTES 20
+#define STRING_LIST_ELEMENT_ADDRESS_OFFSET 12
+#define STRING_LIST_MAXIMUM_COUNT 32767
+
+boolean custom_edition_locale_open(
+	void)
+{
+	char path[MAP_PATH_SIZE];
+	short folder;
+
+	custom_edition_locale_close();
+	for (folder = 0; folder < NUMBER_OF_MAPS_FOLDERS; folder++)
+	{
+		if (maps_folder_has(maps_folder(folder), resource_map_type_describe(_resource_map_locale), MAP_FILE_EXTENSION, path))
+		{
+			break;
+		}
+	}
+	if (folder == NUMBER_OF_MAPS_FOLDERS || !custom_edition_file_open(&custom_edition_locale.file, path))
+	{
+		return FALSE;
+	}
+	if (resource_map_open(&custom_edition_locale.file.source, _resource_map_locale, &custom_edition_locale.map) !=
+		_cache_file_status_ok)
+	{
+		error(_error_silent, "custom edition: '%s' is not a locale resource map", path);
+		custom_edition_file_close(&custom_edition_locale.file);
+		return FALSE;
+	}
+	custom_edition_locale.open = TRUE;
+
+	return TRUE;
+}
+
+void custom_edition_locale_close(
+	void)
+{
+	if (custom_edition_locale.open)
+	{
+		resource_map_close(&custom_edition_locale.map);
+		custom_edition_file_close(&custom_edition_locale.file);
+		custom_edition_locale.open = FALSE;
+	}
+
+	return;
+}
+
+struct custom_edition_string_list *custom_edition_locale_strings(
+	char const *name)
+{
+	struct resource_map const *map = &custom_edition_locale.map;
+	struct resource_map_item const *item = NULL;
+	struct custom_edition_string_list *list = NULL;
+	byte *tag;
+	int32_t count, index;
+	uint32_t address, text_bytes = 0;
+	unsigned short *characters;
+
+	for (index = 0; custom_edition_locale.open && index < map->item_count && !item; index++)
+	{
+		if (!csstrcasecmp(map->items[index].name, name))
+		{
+			item = &map->items[index];
+		}
+	}
+	if (!item || item->size < STRING_LIST_HEADER_BYTES || !(tag = malloc(item->size)))
+	{
+		return NULL;
+	}
+	if (!custom_edition_locale.file.source.read(custom_edition_locale.file.source.context, item->data_offset, item->size, tag))
+	{
+		goto done;
+	}
+	/* (the tag's addresses count from its start; every string lies within
+	it, so together they are no longer than it) */
+	memcpy(&count, tag, sizeof(count));
+	memcpy(&address, tag + sizeof(count), sizeof(address));
+	if (count <= 0 || count > STRING_LIST_MAXIMUM_COUNT || address > item->size ||
+		(uint32_t)count > (item->size - address) / STRING_LIST_ELEMENT_BYTES)
+	{
+		goto done;
+	}
+	for (index = 0; index < count; index++)
+	{
+		byte const *element = tag + address + (uint32_t)index * STRING_LIST_ELEMENT_BYTES;
+		int32_t size;
+		uint32_t data;
+
+		memcpy(&size, element, sizeof(size));
+		memcpy(&data, element + STRING_LIST_ELEMENT_ADDRESS_OFFSET, sizeof(data));
+		if (size < 0 || (size & 1) || data > item->size || (uint32_t)size > item->size - data ||
+			(uint32_t)size > item->size - text_bytes)
+		{
+			goto done;
+		}
+		text_bytes += (uint32_t)size;
+	}
+	/* one block: the list, its strings' addresses and lengths, then their
+	characters, each terminated */
+	list = malloc(sizeof(*list) + (size_t)count * (sizeof(*list->strings) + sizeof(*list->lengths)) +
+		(size_t)text_bytes + (size_t)count * sizeof(unsigned short));
+	if (!list)
+	{
+		goto done;
+	}
+	list->count = count;
+	list->strings = (unsigned short const **)(list + 1);
+	list->lengths = (long *)(list->strings + count);
+	characters = (unsigned short *)(list->lengths + count);
+	for (index = 0; index < count; index++)
+	{
+		byte const *element = tag + address + (uint32_t)index * STRING_LIST_ELEMENT_BYTES;
+		int32_t size;
+		uint32_t data;
+		long length;
+
+		memcpy(&size, element, sizeof(size));
+		memcpy(&data, element + STRING_LIST_ELEMENT_ADDRESS_OFFSET, sizeof(data));
+		memcpy(characters, tag + data, (size_t)size);
+		length = size / 2;
+		if (!length || characters[length - 1])
+		{
+			characters[length++] = 0;
+		}
+		list->strings[index] = characters;
+		list->lengths[index] = length;
+		characters += length;
+	}
+
+done:
+	free(tag);
+
+	return list;
+}
+
 static void custom_edition_cache_files_close(
 	void)
 {
@@ -261,6 +538,7 @@ static void custom_edition_cache_files_close(
 		custom_edition_file_close(&globals->resource_files[type]);
 	}
 	custom_edition_file_close(&globals->map);
+	globals->map_path[0] = 0;
 
 	return;
 }
@@ -568,6 +846,117 @@ boolean custom_edition_level_name(
 		!_strnicmp(level_name, CUSTOM_EDITION_LEVEL_NAME_PREFIX, csstrlen(CUSTOM_EDITION_LEVEL_NAME_PREFIX));
 }
 
+boolean custom_edition_map_file_path(
+	char const *map_name,
+	char *path)
+{
+	return custom_edition_map_path(map_name, path);
+}
+
+boolean custom_edition_map_file_named(
+	char const *map_name,
+	char *path)
+{
+	return custom_edition_map_named(map_name, path);
+}
+
+boolean custom_edition_map_find_version(
+	char const *level_name,
+	unsigned long version,
+	char *path)
+{
+	char const *name = tag_name_strip_path(level_name);
+	char pattern[MAP_PATH_SIZE];
+	char digits[MAP_SHARE_NAME_DIGITS + 1];
+	WIN32_FIND_DATAA data;
+	HANDLE find;
+	unsigned long found_version;
+	boolean found = FALSE;
+	short folder;
+
+	for (folder = 0; folder < NUMBER_OF_MAPS_FOLDERS; folder++)
+	{
+		if (maps_folder_has(maps_folder(folder), name, MAP_FILE_EXTENSION, path) &&
+			map_share_map_version(path, &found_version) && found_version == version)
+		{
+			return TRUE;
+		}
+	}
+	/* (custom_maps' other versions of the name: the one whose name ends in
+	the version's digits, if its hash is that) */
+	if (strlen(maps_folder(0)) + strlen(name) + 1 + MAP_SHARE_NAME_DIGITS + strlen(MAP_FILE_EXTENSION) >= MAP_PATH_SIZE)
+		return FALSE;
+	sprintf(digits, "%08lx", version);
+	sprintf(pattern, "%s%s_*%s", maps_folder(0), name, MAP_FILE_EXTENSION);
+	find = FindFirstFileA(pattern, &data);
+	if (find == INVALID_HANDLE_VALUE)
+		return FALSE;
+	do
+	{
+		char file_name[sizeof(data.cFileName) + 1];
+		size_t length;
+
+		memcpy(file_name, data.cFileName, sizeof(data.cFileName));
+		file_name[sizeof(data.cFileName)] = 0;
+		length = strlen(file_name);
+		if ((data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || length <= strlen(MAP_FILE_EXTENSION))
+			continue;
+		file_name[length - strlen(MAP_FILE_EXTENSION)] = 0;
+		/* (version 1 is also a hash's of digits 00000000: map_share_hash_version) */
+		if (!map_share_name_hashed(file_name) || (size_t)map_share_name_base_length(file_name) != strlen(name) ||
+			_strnicmp(file_name, name, strlen(name)) || (version != 1 && strcmp(file_name + strlen(name) + 1, digits)))
+		{
+			continue;
+		}
+		sprintf(path, "%s%s%s", maps_folder(0), file_name, MAP_FILE_EXTENSION);
+		found = map_share_map_version(path, &found_version) && found_version == version;
+	} while (!found && FindNextFileA(find, &data));
+	CloseHandle(find);
+
+	return found;
+}
+
+boolean custom_edition_resource_map_file_path(
+	short type,
+	char *path)
+{
+	short folder;
+
+	if (type <= _resource_map_none || type >= NUMBER_OF_RESOURCE_MAP_TYPES)
+		return FALSE;
+	for (folder = 0; folder < NUMBER_OF_MAPS_FOLDERS; folder++)
+	{
+		if (maps_folder_has(maps_folder(folder), resource_map_type_describe((enum resource_map_type)type),
+			MAP_FILE_EXTENSION, path))
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+unsigned long custom_edition_map_resource_maps_needed(
+	char const *level_name)
+{
+	char path[MAP_PATH_SIZE];
+	struct custom_edition_file file;
+	uint32_t types = 0;
+
+	if (custom_edition_map_path(level_name, path) && custom_edition_file_open(&file, path))
+	{
+		if (cache_file_resource_maps_needed(&file.source, &types) != _cache_file_status_ok)
+			types = 0;
+		custom_edition_file_close(&file);
+	}
+	return types;
+}
+
+char const *custom_edition_cache_loaded_path(
+	void)
+{
+	return custom_edition_cache_globals.map.stream ? custom_edition_cache_globals.map_path : NULL;
+}
+
 boolean custom_edition_map_file_present(
 	char const *map_name)
 {
@@ -576,30 +965,23 @@ boolean custom_edition_map_file_present(
 	return custom_edition_map_path(map_name, path);
 }
 
-unsigned long custom_edition_map_checksum(
+unsigned long custom_edition_map_version(
 	char const *level_name)
 {
 	char path[MAP_PATH_SIZE];
-	struct custom_edition_file file;
-	struct cache_file_identity identity;
-	unsigned long checksum = 0;
+	unsigned long version = 0;
 
-	if (custom_edition_map_path(level_name, path) && custom_edition_file_open(&file, path))
-	{
-		if (cache_file_identify(&file.source, &identity) == _cache_file_status_ok &&
-			identity.format == _cache_file_format_custom_edition_cache)
-		{
-			checksum = identity.checksum;
-		}
-		custom_edition_file_close(&file);
-	}
+	if (map_share_level_name_version(level_name, &version))
+		return version;
+	if (!custom_edition_map_path(level_name, path) || !map_share_map_version(path, &version))
+		return 0;
 
-	return checksum;
+	return version;
 }
 
 boolean custom_edition_cache_present(
 	char const *level_name,
-	unsigned long checksum,
+	unsigned long version,
 	char *message,
 	long message_size)
 {
@@ -608,13 +990,25 @@ boolean custom_edition_cache_present(
 	struct custom_edition_file file;
 	struct cache_file_identity identity;
 	enum cache_file_status status = _cache_file_status_read_failed;
+	uint32_t needed = 0;
 	short folder;
 	short type;
 
-	if (!custom_edition_map_path(level_name, path))
+	/* (another version's tags are not the host's: the objects the host sends
+	would be other things here) */
+	if (version ? !custom_edition_map_find_version(level_name, version, path) :
+		!custom_edition_map_path(level_name, path))
 	{
-		snprintf(message, message_size, "You don't have the map %.64s.map. If you have it, copy it into custom_maps.",
-			name);
+		if (version && custom_edition_map_named(level_name, path))
+		{
+			error(_error_silent, "custom edition: '%s' is another version of the host's map (the host's %08lx)", path,
+				version);
+			snprintf(message, message_size,
+				"Your %.64s.map is a different version from the host's. Copy the host's into custom_maps.", name);
+			return FALSE;
+		}
+		snprintf(message, message_size, "You don't have the map %.*s.map. If you have it, copy it into custom_maps.",
+			(int)MIN(64, map_share_name_base_length(name)), name);
 		return FALSE;
 	}
 	if (!halo_custom_edition_tag_cache())
@@ -628,6 +1022,13 @@ boolean custom_edition_cache_present(
 	if (custom_edition_file_open(&file, path))
 	{
 		status = cache_file_identify(&file.source, &identity);
+		/* (the resource maps the map's tags are read from: those its tag
+		index says it holds tags in) */
+		if (status == _cache_file_status_ok && identity.format == _cache_file_format_custom_edition_cache &&
+			cache_file_resource_maps_needed(&file.source, &needed) != _cache_file_status_ok)
+		{
+			needed = (1u << _resource_map_bitmaps) | (1u << _resource_map_sounds) | (1u << _resource_map_locale);
+		}
 		custom_edition_file_close(&file);
 	}
 	if (status != _cache_file_status_ok || identity.format != _cache_file_format_custom_edition_cache)
@@ -638,22 +1039,13 @@ boolean custom_edition_cache_present(
 		snprintf(message, message_size, "Your %.64s.map can't be played (debug.txt says why).", name);
 		return FALSE;
 	}
-	/* (another version's tags are not the host's: the objects the host sends
-	would be other things here) */
-	if (checksum && identity.checksum != checksum)
-	{
-		error(_error_silent, "custom edition: '%s' is another version of the host's map (checksum %08lX, the host's %08lX)",
-			path, (unsigned long)identity.checksum, checksum);
-		snprintf(message, message_size,
-			"Your %.64s.map is a different version from the host's. Copy the host's into custom_maps.", name);
-		return FALSE;
-	}
-	/* (the resource maps every Custom Edition map's tags are read from) */
 	for (type = _resource_map_bitmaps; type < NUMBER_OF_RESOURCE_MAP_TYPES; type++)
 	{
 		char const *resource_name = resource_map_type_describe((enum resource_map_type)type);
 		char resource_path[MAP_PATH_SIZE];
 
+		if (!(needed & (1u << type)))
+			continue;
 		for (folder = 0; folder < NUMBER_OF_MAPS_FOLDERS; folder++)
 		{
 			if (maps_folder_has(maps_folder(folder), resource_name, MAP_FILE_EXTENSION, resource_path))
@@ -664,7 +1056,7 @@ boolean custom_edition_cache_present(
 			error(_error_silent, "custom edition: the map '%s' needs %s.map, which no maps folder has", level_name,
 				resource_name);
 			snprintf(message, message_size,
-				"The map %.64s needs Custom Edition's bitmaps.map, sounds.map and loc.map in custom_maps.", name);
+				"The map %.64s needs Custom Edition's %s.map in custom_maps.", name, resource_name);
 			return FALSE;
 		}
 	}
@@ -723,6 +1115,7 @@ struct cache_file_tag_header *custom_edition_cache_tags_load(
 			map_name);
 		return NULL;
 	}
+	strcpy(globals->map_path, path);
 	status = cache_file_identify(&globals->map.source, &identity);
 	if (status != _cache_file_status_ok ||
 		identity.format != _cache_file_format_custom_edition_cache ||

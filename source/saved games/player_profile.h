@@ -37,9 +37,8 @@ enum
 	_button_preset_swap_a_and_left_trigger,
 	_button_preset_swap_b_and_left_trigger,
 	_button_preset_swap_b_and_right_thumb,
-	/* port: Halo 3's Bumper Jumper (the PC menus' B.JUMPER): the left bumper
-	jumps and the right melees; A switches grenades, B acts and reloads, X is
-	the flashlight. The Xbox's own menus offer only the five above */
+	/* port: the Master Chief Collection's Bumper Jumper (jump on the left
+	shoulder, melee on the right), which the Xbox game did not have */
 	_button_preset_bumper_jumper,
 	NUMBER_OF_BUTTON_PRESETS
 };

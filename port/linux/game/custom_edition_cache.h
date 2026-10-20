@@ -43,6 +43,7 @@ characters of a level name (game_engine.c, struct game_engine_stage). */
 
 /* ---------- structures */
 
+struct bitmap_data;
 struct cache_file_tag_header;
 struct custom_edition_load_report;
 struct scenario_object_datum;
@@ -80,20 +81,60 @@ boolean custom_edition_cache_playable(
 Custom Edition maps folders, whatever it holds. */
 boolean custom_edition_map_file_present(
 	char const *map_name);
-/* The checksum in the header of the level's map file, which differs between
-versions of a map; 0 if it has no file or the file is not a Custom Edition
-cache. */
-unsigned long custom_edition_map_checksum(
+/* The version of the level's map, a network game record's
+(map_share_hash_version): of the map a host's game was given
+(map_share_level_name_choose), else of the level's file; 0 if it has none. */
+unsigned long custom_edition_map_version(
 	char const *level_name);
+/* The file of the map `map_name` (a level name or a file name) in the
+Custom Edition maps folders, into `path` (256 characters): in a network game
+on that level, the file of the game's version
+(custom_edition_map_find_version), else custom_edition_map_file_named's.
+FALSE if none. */
+boolean custom_edition_map_file_path(
+	char const *map_name,
+	char *path);
+/* ... a network game's map's file looked for again at once: the maps
+changed (custom_edition_maps_look_again) */
+void custom_edition_map_paths_forget(
+	void);
+/* ... the file the name names, whatever version a network game is on:
+<name>.map; for a name without a hash, the custom_maps folder's map of that
+name and a hash (<name>_<hash>.map, another version's) if it is the one;
+for a name with one (a build of before's level name), the map of the name
+without it, if the hash is its. */
+boolean custom_edition_map_file_named(
+	char const *map_name,
+	char *path);
+/* ... the file of the level's name and `version` (map_share_hash_version's):
+<name>.map in a maps folder, or the custom_maps folder's <name>_<hash>.map. */
+boolean custom_edition_map_find_version(
+	char const *level_name,
+	unsigned long version,
+	char *path);
+/* The resource map of `type` (enum resource_map_type: bitmaps.map,
+sounds.map, loc.map) in the first maps folder that has it, into `path` (256
+characters); FALSE if none has it. */
+boolean custom_edition_resource_map_file_path(
+	short type,
+	char *path);
+/* The resource maps the level's map needs (a bit, 1 << type, for each
+resource map its tags are held in: cache_file_resource_maps_needed); 0 if
+it has no file, or none. */
+unsigned long custom_edition_map_resource_maps_needed(
+	char const *level_name);
+/* the file of the Custom Edition map loaded, or NULL */
+char const *custom_edition_cache_loaded_path(
+	void);
 /* Whether this machine can play the level `level_name` (custom_maps\<name>),
-as a network game's client must: its file present and a Custom Edition
-cache of the host's version (`checksum`, custom_edition_map_checksum's on
-the host; 0 for any), Custom Edition maps able to run, and the resource maps
-present. When not, `message` (`message_size` characters) says why, for the
-player, and what to do. */
+as a network game's client must: a file of it of the host's version
+(`version`, custom_edition_map_version's on the host; 0 for any), a Custom
+Edition cache, Custom Edition maps able to run, and the resource maps it
+needs present. When not, `message` (`message_size` characters) says why, for
+the player, and what to do. */
 boolean custom_edition_cache_present(
 	char const *level_name,
-	unsigned long checksum,
+	unsigned long version,
 	char *message,
 	long message_size);
 
@@ -117,6 +158,27 @@ struct cache_file_tag_header *custom_edition_cache_tags_load(
 (paths.custom_edition) */
 boolean custom_edition_install_present(
 	void);
+
+/* The locale resource map (loc.map) of the maps folders, which holds the
+text of the Custom Edition the maps come from, in its language: opened (FALSE
+if there is none, or it is not one) until custom_edition_locale_close. */
+boolean custom_edition_locale_open(
+	void);
+void custom_edition_locale_close(
+	void);
+/* The strings of its unicode string list tag `name` (as
+"ui\\shell\\main_menu\\..."): each string's UTF-16 characters, its
+terminator included, lengths[index] of them from strings[index]. One
+block, released with free(); NULL if it holds no such list, or one that
+does not fit in its tag. */
+struct custom_edition_string_list
+{
+	long count;
+	unsigned short const **strings;
+	long *lengths;
+};
+struct custom_edition_string_list *custom_edition_locale_strings(
+	char const *name);
 boolean custom_edition_cache_tags_loaded(
 	void);
 /* Whether the structure bsp reference (of the loaded map's scenario) names
@@ -160,6 +222,22 @@ them either way. */
 boolean custom_edition_reordered_bitmaps_find(
 	byte *tag_cache,
 	unsigned long loaded_bytes);
+/* As custom_edition_reordered_bitmaps_find, in the loaded map's tags, which
+the validator has checked: for the bitmaps of mods (mod_bitmaps.c), Halo
+PC's on any map. FALSE after logging why it cannot. */
+boolean custom_edition_loaded_reordered_bitmaps_find(
+	void);
+/* The order (enum custom_edition_channel_order) Halo PC keeps the channels
+of bitmap `bitmap_index` of the tag `handle` names in, of those found. */
+short custom_edition_bitmap_channel_order(
+	long handle,
+	long bitmap_index);
+/* Whether the texture cache can draw `bitmap` from pixels laid out as a
+Halo PC tag lays them out (rasterizer_xbox_bitmap_rebuild_hardware_format
+makes them the hardware's): the game's bitmap_verify, a format with a
+hardware texture, sizes it can swizzle, and every pixel its levels need. */
+boolean custom_edition_bitmap_drawable(
+	struct bitmap_data *bitmap);
 /* Decodes every sound permutation of a tag cache custom_edition_cache_load
 filled (its resource offsets combined) that this build would not play: Ogg
 Vorbis, uncompressed, or mono at 44 kHz. Each is encoded again in memory as
@@ -177,7 +255,7 @@ boolean custom_edition_sounds_decode(
 `compression` (16-bit PCM, little-endian or `big_endian`; Xbox ADPCM; Ogg
 Vorbis), `channels` channels at `rate`, encoded as Xbox ADPCM at
 `encoded_rate`: a buffer of the game's allocator of *encoded_bytes; NULL
-when they cannot be (loose_sounds.c) */
+when they cannot be (mod_sounds.c) */
 byte *custom_edition_sounds_encode(
 	byte const *data,
 	long data_bytes,

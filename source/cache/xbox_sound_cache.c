@@ -543,8 +543,10 @@ static const char *cache_block_get_sound_permutation_name(
 	struct xbox_cache_sound_datum *cache_sound;
 
 	cache_sound = datum_get(xbox_sound_cache_globals.cache_sounds, block_index);
-	sprintf(
+	/* port: snprintf (a map's tag's name may be any length) */
+	snprintf(
 		xbox_sound_cache_globals.debug_block_name,
+		sizeof(xbox_sound_cache_globals.debug_block_name),
 		"%s (%s)",
 		tag_get_name(cache_sound->sound->runtime_tag_index),
 		cache_sound->sound);
@@ -604,12 +606,12 @@ static void sound_cache_start_loading_sound(
 		sound->cache_block_index = cache_block_index;
 		sound->cache_base_address = (unsigned long)cache_address;
 		cache_sound->sound = sound;
-		/* port: or, the sound of a tag file played over the map's, from
-		memory, at once (port/linux/game/loose_sounds.c) */
+		/* port: or, the sound of a mod played over the map's, from memory,
+		at once (port/linux/game/mod_sounds.c) */
 		{
-			extern boolean loose_sounds_read(struct sound_permutation const *permutation, void *buffer);
+			extern boolean mod_sounds_read(struct sound_permutation const *permutation, void *buffer);
 
-			if (loose_sounds_read(sound, cache_address))
+			if (mod_sounds_read(sound, cache_address))
 			{
 				cache_sound->loaded = TRUE;
 			}

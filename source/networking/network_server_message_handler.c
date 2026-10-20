@@ -270,6 +270,9 @@ void network_distributed_handle_message(long machine_index, word const *message,
 /* port/linux/game/network_voice.c's: voice chat, in the lobby too */
 boolean network_voice_handles_message(word const *message, word size);
 void network_voice_handle_message(long machine_index, word const *message, word size);
+/* port/linux/game/map_share.c's: map sharing, in the lobby too */
+boolean map_share_handles_message(word const *message, word size);
+void map_share_handle_message(long machine_index, word const *message, word size, boolean from_stream);
 void network_distributed_handle_stream_message(long machine_index, word const *message, word size);
 
 /* ---------- constants */
@@ -587,6 +590,14 @@ static boolean network_game_server_handle_message_client_graceful_game_exit_post
 
 /* ---------- globals */
 
+/* port: where each machine's distributed datagrams come from, by slot.
+The host replies there, since a client may not be on the client port. */
+static struct
+{
+	struct network_connection *connection;
+	struct transport_address address;
+} network_distributed_return_addresses[MAXIMUM_NETWORK_MACHINE_COUNT];
+
 /* ---------- private code */
 
 /* port: a name a machine sends (its machine's, or a player's: they come
@@ -876,11 +887,16 @@ boolean network_distributed_server_send_to_machine(
 	connection = network_game_server_get_client_connection(machine);
 	if (!connection || !network_connection_active(connection))
 		return FALSE;
-	/* from the game's public datagram endpoint (the one clients send
-	their game updates to) to the client's, at the address its
-	connection comes from (the write swaps the header in place) */
+	/* to where the client's datagrams come from, else the client port at
+	its connection's address (the write swaps the header in place) */
 	network_connection_get_address(connection, &address, NULL);
 	address.port = NETWORK_GAME_CLIENT_PORT;
+	if (network_distributed_return_addresses[machine_index].connection == connection &&
+		network_distributed_return_addresses[machine_index].address.address.long_words[0] ==
+			address.address.long_words[0])
+	{
+		address = network_distributed_return_addresses[machine_index].address;
+	}
 	csmemcpy(buffer, message, size);
 	return network_game_server_write(network_game_server_get_connection(server), buffer, size, &address, 0);
 }
@@ -1380,6 +1396,20 @@ boolean network_game_server_handle_client_message(
 					}
 					break;
 				}
+				/* (port: map sharing's from any machine that joined, in the
+				lobby too, from its stream alone: map_share.c) */
+				if (map_share_handles_message(message, message_buffer_size))
+				{
+					long machine_index;
+
+					if (network_game_server_client_machine_is_joined_to_game(server, machine) &&
+						network_game_server_get_client_machine(server, machine, &machine_index))
+					{
+						network_game_server_client_machine_heard(server, machine);
+						map_share_handle_message(machine_index, message, message_buffer_size, TRUE);
+					}
+					break;
+				}
 				/* (in game, from a machine that has loaded it, as a datagram
 				is: else dropped) */
 				if (network_game_server_client_machine_is_joined_to_game(server, machine) &&
@@ -1593,8 +1623,10 @@ boolean network_game_server_handle_datagram(
 				those that joined, and only in game: else dropped) */
 				if (network_game_server_get_state(server, NULL) == _network_game_server_state_ingame)
 				{
+					/* port: not the host's own machine first (a second game on its
+					computer shares its address) */
 					struct network_game_server_client_machine *client_machine =
-						network_game_server_get_client_machine_at_address(server, source_address->address.long_words[0]);
+						network_game_server_get_remote_client_machine_at_address(server, source_address->address.long_words[0]);
 
 					/* (and has loaded it, as for its reliable messages) */
 					if (client_machine && network_game_server_client_machine_is_loaded(server, client_machine))
@@ -1603,6 +1635,14 @@ boolean network_game_server_handle_datagram(
 
 						network_game_server_client_machine_heard(server, client_machine);
 						network_game_server_get_client_machine(server, client_machine, &machine_index);
+						/* port: where its datagrams come from, which the host answers
+						(network_distributed_return_addresses) */
+						if (VALID_INDEX(machine_index, MAXIMUM_NETWORK_MACHINE_COUNT))
+						{
+							network_distributed_return_addresses[machine_index].connection =
+								network_game_server_get_client_connection(client_machine);
+							network_distributed_return_addresses[machine_index].address = *source_address;
+						}
 						network_distributed_handle_message(machine_index, message, datagram_size);
 					}
 				}
@@ -1675,9 +1715,12 @@ static boolean network_game_server_handle_message_client_broadcast_game_search(
 	boolean result = TRUE;
 	/* port: the advertisement is broadcast (to every internet play peer
 	too): one each so often answers every machine searching, and a flood of
-	searches no more */
+	searches no more. A searcher not on the client port hears no broadcast,
+	so it is answered directly every time. */
 	static unsigned long last_advertised_time = 0;
 	unsigned long now = system_milliseconds();
+	boolean broadcast_due = !last_advertised_time || now - last_advertised_time >= GAME_ADVERTISEMENT_INTERVAL;
+	boolean answer_directly = source_address && source_address->port != NETWORK_GAME_CLIENT_PORT;
 
 	match_assert(
 		"c:\\halo\\SOURCE\\networking\\network_server_message_handler.c",
@@ -1687,8 +1730,9 @@ static boolean network_game_server_handle_message_client_broadcast_game_search(
 	{
 		struct network_game *game = network_game_server_get_game(server);
 
-		/* (the time taken only by a search answered) */
-		if (game && last_advertised_time && now - last_advertised_time < GAME_ADVERTISEMENT_INTERVAL)
+		/* (the time taken only by a search answered; port: one off the client
+		port is always answered) */
+		if (game && !broadcast_due && !answer_directly)
 			return TRUE;
 		if (game)
 		{
@@ -1764,22 +1808,26 @@ static boolean network_game_server_handle_message_client_broadcast_game_search(
 				sizeof(advertisement));
 			if (reply)
 			{
-				word message_size = GET_MESSAGE_SIZE(reply->header);
 				struct network_connection *connection =
 					network_game_server_get_connection(server);
 
-				last_advertised_time = now ? now : 1;
-				result = network_game_server_write(
-					connection,
-					reply,
-					message_size,
-					&address,
-					0);
-				if (!result)
+				/* port: the broadcast when it is due, and a searcher off the
+				client port answered directly */
+				if (broadcast_due)
 				{
-					network_event(
-						"network_game_server_write() failed in handle_message_client_broadcast_game_search()");
+					last_advertised_time = now ? now : 1;
+					result = network_game_server_write(connection, reply, GET_MESSAGE_SIZE(reply->header), &address, 0);
+					if (!result)
+					{
+						network_event(
+							"network_game_server_write() failed in handle_message_client_broadcast_game_search()");
+					}
+					/* (the write swapped the header in place: a fresh copy for the next) */
+					reply = answer_directly ? create_network_game_message(_message_server_game_advertise,
+						&advertisement, sizeof(advertisement)) : NULL;
 				}
+				if (answer_directly && reply)
+					network_game_server_write(connection, reply, GET_MESSAGE_SIZE(reply->header), source_address, 0);
 			}
 			else
 			{

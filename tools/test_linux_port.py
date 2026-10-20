@@ -11,6 +11,10 @@ import pytest
 
 from tools import linux_build, linux_link_check, linux_msvc_semantics
 
+# for tests that compile for the Linux target (and run what they build)
+linux_host_only = pytest.mark.skipif(not sys.platform.startswith("linux"),
+                                     reason="builds for the Linux target, so needs a Linux host")
+
 
 # ---------- MSVC semantics header
 
@@ -80,6 +84,7 @@ def test_xdk_headers_use_the_sdk_spellings():
         assert not re.findall(r"\bhalo_\w+", text), header.name
 
 
+@linux_host_only
 @pytest.mark.skipif(shutil.which("clang") is None, reason="clang is needed to compile the headers")
 def test_xdk_headers_compile_for_the_game(tmp_path):
     root = XDK_INCLUDE.parent.parent.parent
@@ -176,8 +181,8 @@ MENU_ATTRIBUTES = {
     "menus": {"root"},
     "bitmap": {"name", "width", "height", "frames", "platform"},
     "frame": {"png", "map", "index", "width", "height", "x", "y", "platform"},
-    "strings": {"name", "platform"},
-    "string": {"text", "platform"},
+    "strings": {"name", "map", "platform"},
+    "string": {"text", "map", "platform"},
     "widget": {"name", "type", "controller", "flags", "bitmap", "text", "strings", "values", "setting", "font",
                "color", "align", "description", "string_list", "list_flags", "text_flags", "header_bitmap",
                "footer_bitmap", "header_bounds", "footer_bounds", "child_controller", "x", "y", "left", "top",
@@ -262,6 +267,9 @@ def test_menus_are_well_formed():
                     assert width % logical[0] == 0 and width // logical[0] == height // logical[1], where
             elif element.tag == "strings":
                 strings[element.get("name")] = element
+                # (a string's map= is its number in the list's map list, menu_tags.c)
+                for string in element.findall("string"):
+                    assert string.get("map") is None or (element.get("map") and string.get("map").isdigit()), where
             elif element.tag == "widget":
                 name = element.get("name")
                 assert name and name not in widgets, where
@@ -316,6 +324,18 @@ def test_menu_settings_exist():
     assert controls == set(re.findall(r'\{ "(controls\.[a-z_]+)", L"', functions))
 
 
+def test_default_brokers_are_brokers_txt():
+    """The brokers a game uses with no brokers.txt beside its config.toml
+    (p2p_signal.c's DEFAULT_BROKERS) are port/assets/network/brokers.txt's."""
+    root = MENUS.parent.parent.parent
+    listed = [line.split("#", 1)[0].strip()
+              for line in (root / "port/assets/network/brokers.txt").read_text().splitlines()]
+    default = re.search(r'^#define DEFAULT_BROKERS "([^"]*)"',
+                        (root / "port/linux/src/p2p_signal.c").read_text(), re.M).group(1)
+    assert default.split(",") == [line for line in listed if line]
+
+
+@linux_host_only
 def test_p2p_signatures_and_listings(tmp_path):
     """internet play's Ed25519 (RFC 8032), the X25519 key of a seed, and the
     server browser's listings from host to browser (tools/p2p_lobby_check.c),
@@ -351,6 +371,89 @@ def test_p2p_signatures_and_listings(tmp_path):
     result = subprocess.run([str(program)], capture_output=True, text=True, timeout=60)
     assert result.returncode == 0, result.stdout
     assert "PASS" in result.stdout
+
+
+
+# port_config.c on its own, with the app's file paths (HALO_DATA_ROOT) and C
+# library calls: "get <setting>" prints it, "write <setting> <value>" sets it
+CONFIG_PROGRAM = r"""
+#include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
+#include "port_config.h"
+
+void platform_log(const char *format, ...)
+{
+    va_list arguments;
+
+    va_start(arguments, format);
+    vfprintf(stderr, format, arguments);
+    va_end(arguments);
+    fputc('\n', stderr);
+}
+
+int main(int argc, char **argv)
+{
+    char text[256];
+
+    if (argc == 3 && !strcmp(argv[1], "get") && config_text(argv[2], text, sizeof(text)))
+        return puts(text) < 0;
+    if (argc == 4 && !strcmp(argv[1], "write"))
+        return !config_write(argv[2], argv[3]);
+    return 1;
+}
+"""
+
+
+def test_config_has_each_section_once(tmp_path):
+    """config.toml names each section once, as TOML asks: the defaults the
+    game writes, and a file an older version wrote with [display] twice
+    (which went unread), joined"""
+    compiler = shutil.which("clang") or shutil.which("cc")
+    if not compiler:
+        pytest.skip("needs a C compiler")
+    root = Path(__file__).resolve().parent.parent
+    stubs = tmp_path / "stubs"
+    (stubs / "SDL3").mkdir(parents=True)
+    (stubs / "SDL3" / "SDL.h").write_text("")
+    (stubs / "platform.h").write_text("void platform_log(const char *format, ...);\n")
+    # (beside the stubs, which it then includes instead of the platform layer's)
+    for name in ("port_config.c", "port_config.h"):
+        shutil.copy(root / "port/linux/src" / name, stubs / name)
+    (tmp_path / "main.c").write_text(CONFIG_PROGRAM)
+    program = tmp_path / "config_program"
+    subprocess.run([compiler, "-DHALO_ANDROID=1", "-DHALO_ARM64_GUEST=1", f"-I{stubs}",
+                    f"-I{root}/port/third_party/tomlc17", "-o", str(program),
+                    str(tmp_path / "main.c"), str(stubs / "port_config.c"),
+                    str(root / "port/third_party/tomlc17/tomlc17.c"), "-lpthread"], check=True)
+    data = tmp_path / "data"
+    data.mkdir()
+    config = data / "config.toml"
+
+    def run(*command):
+        result = subprocess.run([str(program), *command], capture_output=True, text=True,
+                                env={**os.environ, "HALO_DATA_ROOT": str(data)})
+        assert result.returncode == 0, result.stderr
+        assert "using the defaults" not in result.stderr, result.stderr
+        return result.stdout.strip(), result.stderr
+
+    def sections():
+        return re.findall(r"^\[(\w+)\]$", config.read_text(), re.M)
+
+    # the defaults
+    assert run("get", "display.first_person_legs")[0] == "false"
+    assert len(sections()) == len(set(sections())), sections()
+    run("write", "display.first_person_legs", "true")
+    assert run("get", "display.first_person_legs")[0] == "true"
+
+    # an older version's
+    config.write_text("[display]\nvsync = false\n\n[game]\nconsole_log = \"all\"\n\n"
+                      "[display]\nfirst_person_legs = true\n")
+    value, log = run("get", "display.first_person_legs")
+    assert value == "true" and "joined" in log
+    assert sections().count("display") == 1
+    assert run("get", "display.vsync")[0] == "false"
+    assert run("get", "game.console_log")[0] == "all"
 
 
 # ---------- system link's stand-in machines (tools/system_link_bots.py)
@@ -396,6 +499,19 @@ def test_system_link_bots_messages_are_the_games():
     for data in sent:
         name = names[data[-1]]
         assert len(data) - 4 == sizes[name], name
+
+
+# ---------- the wire format (tools/network_format.py)
+
+
+def test_network_format_is_the_recorded_one():
+    """what the machines send each other is what port/linux/network_format.txt
+    records for HALO_PORT_NETWORK_VERSION, and NETCODE.md says what that
+    version changed"""
+    from tools import network_format
+
+    problems = network_format.check()
+    assert not problems, "\n".join(problems)
 
 
 # ---------- the tag validator (port/linux/game/tag_validate.c)

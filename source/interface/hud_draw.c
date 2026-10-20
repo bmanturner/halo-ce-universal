@@ -83,6 +83,7 @@ symbols in this file:
 /* ---------- headers */
 
 #include "cseries/cseries.h"
+#include "passenger_camera.h" /* port: port/linux/game/passenger_camera.c */
 #include "cseries/errors.h"
 #include "math/real_math.h"
 #include "bitmaps/bitmaps.h"
@@ -1545,6 +1546,9 @@ void hud_draw_static_element(
 	return;
 }
 
+/* port: the left of the last picture drawn (hud_draw.h) */
+short hud_draw_last_left;
+
 static void hud_draw_bitmap_internal(
 	void *meter_parameters,
 	struct bitmap_data const *bitmap,
@@ -1584,6 +1588,11 @@ static void hud_draw_bitmap_internal(
 		vertices[vertex_index].texture_coordinates.y = texture_y;
 		vertices[vertex_index].color = color;
 	}
+
+	/* port: where it is drawn (hud_draw_last_left) */
+	hud_draw_last_left = SHORT_MAX;
+	for (vertex_index = 0; vertex_index < 4; vertex_index++)
+		hud_draw_last_left = (short)MIN(hud_draw_last_left, vertices[vertex_index].position.x);
 
 	if (reticle_scale != 1.0f)
 	{
@@ -1673,6 +1682,9 @@ static void hud_draw_bitmap_with_meter(
 			_hud_dont_scale_offset_bit),
 		0.0f,
 		&point);
+	/* port: the crosshairs_draw scope moves only the weapon's reticle */
+	if (is_crosshair_bitmap)
+		passenger_camera_reticle_offset(&point);
 	hud_calculate_bitmap_bounds(
 		bitmap,
 		absolute_placement->corner,

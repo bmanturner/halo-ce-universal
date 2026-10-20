@@ -109,6 +109,10 @@ void host_gl_fence_frame(unsigned int slot);
 void host_gl_wait_frame(unsigned int slot);
 
 int host_sdl_show_simple_message_box(unsigned int flags, const char *title, const char *message);
+/* SDL_ShowMessageBox of up to three buttons (SDL_MessageBoxData has not the
+guest's layout): the index of the one chosen, else -1 */
+int host_sdl_show_message_box(unsigned int flags, const char *title, const char *message, int default_index,
+	const char *button0, const char *button1, const char *button2);
 
 unsigned int host_ios_render_height(void);
 void host_ios_set_frame_rate(unsigned int frames_per_second);

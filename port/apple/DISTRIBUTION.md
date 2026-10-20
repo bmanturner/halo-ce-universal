@@ -38,8 +38,9 @@ builds still contain no game data.
 
 ## Rights and distribution channels
 
-The upstream project labels its contributions CC0, and dependency licenses
-must remain included. That label does not establish the contributor's rights
+The upstream project licenses its contributions under the AGPL 3.0 or later
+(CC0 before its move to the AGPL), and dependency licenses must remain
+included. That licence does not establish the contributor's rights
 to reconstructed proprietary code, original assets, or trademarks. Requiring
 a user-supplied game image does not settle those questions. Microsoft's
 [Game Content Usage Rules](https://www.xbox.com/en-US/developers/rules) are not
